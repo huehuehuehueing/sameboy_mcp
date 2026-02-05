@@ -102,6 +102,29 @@ ffi.cdef("""
         } colors[5];
     } GB_palette_t;
 
+    // Audio sample structure
+    typedef struct {
+        int16_t left;
+        int16_t right;
+    } GB_sample_t;
+
+    // Audio channel types
+    typedef enum {
+        GB_SQUARE_1,
+        GB_SQUARE_2,
+        GB_WAVE,
+        GB_NOISE,
+        GB_N_CHANNELS
+    } GB_channel_t;
+
+    // Highpass filter mode
+    typedef enum {
+        GB_HIGHPASS_OFF,
+        GB_HIGHPASS_ACCURATE,
+        GB_HIGHPASS_REMOVE_DC_OFFSET,
+        GB_HIGHPASS_MAX
+    } GB_highpass_mode_t;
+
     // Callback types
     typedef void (*GB_vblank_callback_t)(GB_gameboy_t *gb, GB_vblank_type_t type);
     typedef void (*GB_execution_callback_t)(GB_gameboy_t *gb, uint16_t address, uint8_t opcode);
@@ -110,6 +133,7 @@ ffi.cdef("""
     typedef void (*GB_log_callback_t)(GB_gameboy_t *gb, const char *string, GB_log_attributes_t attributes);
     typedef uint32_t (*GB_rgb_encode_callback_t)(GB_gameboy_t *gb, uint8_t r, uint8_t g, uint8_t b);
     typedef void (*GB_update_input_hint_callback_t)(GB_gameboy_t *gb);
+    typedef void (*GB_sample_callback_t)(GB_gameboy_t *gb, GB_sample_t *sample);
 
     // ============ Lifecycle Functions ============
     GB_gameboy_t *GB_alloc(void);
@@ -197,6 +221,15 @@ ffi.cdef("""
     bool GB_rewind_pop(GB_gameboy_t *gb);
     void GB_set_rewind_length(GB_gameboy_t *gb, double seconds);
     void GB_rewind_reset(GB_gameboy_t *gb);
+
+    // ============ Audio ============
+    void GB_set_sample_rate(GB_gameboy_t *gb, unsigned sample_rate);
+    unsigned GB_get_sample_rate(GB_gameboy_t *gb);
+    void GB_set_highpass_filter_mode(GB_gameboy_t *gb, GB_highpass_mode_t mode);
+    void GB_apu_set_sample_callback(GB_gameboy_t *gb, GB_sample_callback_t callback);
+    void GB_set_channel_muted(GB_gameboy_t *gb, GB_channel_t channel, bool muted);
+    bool GB_is_channel_muted(GB_gameboy_t *gb, GB_channel_t channel);
+    void GB_set_interference_volume(GB_gameboy_t *gb, double volume);
 """)
 
 

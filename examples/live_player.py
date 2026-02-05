@@ -2,11 +2,11 @@
 # Copyright (c) 2025 Larry H (l.gr [at] dartmouth [dot] edu)
 # SPDX-License-Identifier: MIT
 """
-Live Player - Interactive emulator with live display ready for agent connection.
+Live Player - Interactive emulator with live display and audio.
 
 This script loads a ROM with optional save state and presents a live display
-window with keyboard controls. It can run standalone or be connected to by
-an AI agent via the MCP server.
+window with keyboard controls and audio output. It can run standalone or be
+connected to by an AI agent via the MCP server.
 
 Usage:
     python examples/live_player.py <rom_path> [options]
@@ -27,6 +27,9 @@ Examples:
     # Start paused (for agent connection)
     python examples/live_player.py roms/game.gb --paused
 
+    # Disable audio
+    python examples/live_player.py roms/game.gb --no-audio
+
 Controls:
     Arrow Keys  - D-pad
     Z           - A button
@@ -37,6 +40,8 @@ Controls:
     Space       - Pause/Resume
     F1          - Save state to file
     F2          - Load state from file
+    M           - Toggle audio mute
+    1-4         - Toggle audio channels (Square1, Square2, Wave, Noise)
 """
 
 import argparse
@@ -49,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sameboy_mcp.emulator.core import SameBoyEmulator, EmulatorState
 from sameboy_mcp.emulator.display import is_available as sdl_available
+from sameboy_mcp.emulator.audio import is_available as audio_available, AudioHandler
 
 
 def find_save_state(rom_path: Path) -> Path | None:
@@ -72,7 +78,7 @@ def find_save_state(rom_path: Path) -> Path | None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Live emulator player with display ready for agent connection",
+        description="Live emulator player with display and audio",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -91,6 +97,8 @@ def main():
                         help="Start in paused state (for agent connection)")
     parser.add_argument("--turbo", "-t", action="store_true",
                         help="Start with turbo mode enabled")
+    parser.add_argument("--no-audio", action="store_true",
+                        help="Disable audio output")
     parser.add_argument("--lib", help="Path to libsameboy.so (optional)")
 
     args = parser.parse_args()
@@ -160,6 +168,27 @@ def main():
         except Exception as e:
             print(f"Warning: Error loading save state: {e}")
 
+    # Initialize audio
+    audio_handler = None
+    audio_muted = False
+    channel_muted = [False, False, False, False]  # Square1, Square2, Wave, Noise
+
+    if not args.no_audio and audio_available():
+        try:
+            audio_handler = AudioHandler(emu.lib, emu.gb)
+            if audio_handler.enable():
+                print("Audio: Enabled (48kHz stereo)")
+            else:
+                print("Audio: Failed to initialize")
+                audio_handler = None
+        except Exception as e:
+            print(f"Audio: Error - {e}")
+            audio_handler = None
+    elif args.no_audio:
+        print("Audio: Disabled (--no-audio)")
+    else:
+        print("Audio: SDL2 not available")
+
     # Enable turbo if requested
     if args.turbo:
         emu.set_turbo(True)
@@ -169,12 +198,16 @@ def main():
     title = f"SameBoy - {emu.rom_title}"
     if not emu.enable_live_display(scale=args.scale):
         print("Error: Failed to enable live display")
+        if audio_handler:
+            audio_handler.disable()
         emu.free()
         sys.exit(1)
 
     print(f"\nLive display opened!")
     print("Controls: Arrow keys=D-pad, Z=A, X=B, Enter=Start, Shift=Select")
     print("          Space=Pause, Escape=Quit, F1=Save, F2=Load")
+    if audio_handler:
+        print("          M=Mute, 1-4=Toggle channels")
     print("\nReady for agent connection via MCP server.")
     if args.paused:
         print("Started in PAUSED state. Press Space to resume.")
@@ -197,7 +230,7 @@ def main():
                 # Run frame
                 emu.run_frame()
 
-                # Frame timing
+                # Frame timing (audio sync is handled by the audio callback)
                 elapsed = time.time() - last_frame_time
                 if elapsed < frame_duration:
                     time.sleep(frame_duration - elapsed)
@@ -214,6 +247,8 @@ def main():
 
     # Cleanup
     print("\nShutting down...")
+    if audio_handler:
+        audio_handler.disable()
     emu.disable_live_display()
     emu.free()
     print("Done!")
