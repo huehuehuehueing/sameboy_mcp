@@ -11,9 +11,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+display = [
+    "pysdl2>=0.9.16",
+    "pysdl2-dll>=2.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+]
+all = [
+    "sameboy-mcp[display,dev]",
 ]
 
 [project.scripts]

@@ -71,6 +71,10 @@ class CommandType(Enum):
     # Misc
     SET_TURBO = auto()
 
+    # Live display
+    ENABLE_LIVE_DISPLAY = auto()
+    DISABLE_LIVE_DISPLAY = auto()
+
 
 @dataclass
 class Command:
@@ -357,6 +361,15 @@ class EmulatorThread:
                 case CommandType.SET_TURBO:
                     emu.set_turbo(args["enabled"], args.get("no_frame_skip", False))
                     return {"success": True}
+
+                # Live display
+                case CommandType.ENABLE_LIVE_DISPLAY:
+                    success = emu.enable_live_display(args.get("scale", 2))
+                    return {"success": success, "enabled": emu.live_display_enabled}
+
+                case CommandType.DISABLE_LIVE_DISPLAY:
+                    emu.disable_live_display()
+                    return {"success": True, "enabled": False}
 
                 case _:
                     return {"error": f"Unknown command type: {cmd.type}"}

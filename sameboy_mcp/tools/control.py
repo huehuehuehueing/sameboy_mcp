@@ -253,3 +253,60 @@ def register_control_tools(server: Server, emu_thread: EmulatorThread) -> None:
             "turbo_enabled": enabled,
             "no_frame_skip": no_frame_skip,
         }
+
+    @server.tool()
+    async def enable_live_display(scale: int = 2) -> dict:
+        """
+        Enable a live display window showing emulator frames in real-time.
+
+        The window shows the game screen updating at 60fps. Keyboard input
+        in the window is forwarded to the emulator:
+        - Arrow keys: D-pad
+        - Z: A button
+        - X: B button
+        - Enter: Start
+        - Shift/Backspace: Select
+
+        Args:
+            scale: Display scaling factor (1-4, default 2)
+
+        Returns:
+            Status of the live display
+        """
+        if scale < 1:
+            scale = 1
+        if scale > 4:
+            scale = 4
+
+        result = emu_thread.send_command(CommandType.ENABLE_LIVE_DISPLAY, {
+            "scale": scale
+        })
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        return {
+            "success": result.get("success", False),
+            "enabled": result.get("enabled", False),
+            "scale": scale,
+            "message": "Live display window opened. Close the window or call disable_live_display to stop."
+        }
+
+    @server.tool()
+    async def disable_live_display() -> dict:
+        """
+        Disable and close the live display window.
+
+        Returns:
+            Confirmation message
+        """
+        result = emu_thread.send_command(CommandType.DISABLE_LIVE_DISPLAY)
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        return {
+            "success": True,
+            "enabled": False,
+            "message": "Live display window closed."
+        }

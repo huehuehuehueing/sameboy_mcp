@@ -425,6 +425,45 @@ Enable or disable turbo mode (fast-forward).
 | `enabled` | bool | required | Enable turbo |
 | `no_frame_skip` | bool | false | Render all frames |
 
+### `enable_live_display`
+Open a window showing emulator frames in real-time.
+
+The window displays the game screen at 60fps with keyboard input support:
+- Arrow keys: D-pad
+- Z: A button
+- X: B button
+- Enter: Start
+- Shift/Backspace: Select
+
+**Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `scale` | int | 2 | Display scaling factor (1-4) |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "enabled": true,
+  "scale": 2,
+  "message": "Live display window opened."
+}
+```
+
+**Requirements:** Requires PySDL2 (`pip install pysdl2 pysdl2-dll`)
+
+### `disable_live_display`
+Close the live display window.
+
+**Returns:**
+```json
+{
+  "success": true,
+  "enabled": false,
+  "message": "Live display window closed."
+}
+```
+
 ---
 
 ## Save State Tools

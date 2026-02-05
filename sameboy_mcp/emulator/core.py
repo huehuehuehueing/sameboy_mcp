@@ -1,12 +1,15 @@
 """SameBoy emulator wrapper class."""
 
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, TYPE_CHECKING
 from enum import Enum, auto
 from collections import deque
 import threading
 
 from .bindings import ffi, load_library, MODEL_MAP, KEY_MAP, DIRECT_ACCESS_MAP, DMG_PALETTES, create_palette
+
+if TYPE_CHECKING:
+    from .display import LiveDisplay
 
 
 class EmulatorState(Enum):
@@ -107,6 +110,9 @@ class SameBoyEmulator:
         self._rom_loaded = False
         self._rom_title = ""
 
+        # Live display
+        self._live_display: Optional["LiveDisplay"] = None
+
     def init(self, model: str = "CGB_E") -> None:
         """
         Initialize the Game Boy emulator.
@@ -142,6 +148,12 @@ class SameBoyEmulator:
         @ffi.callback("void(GB_gameboy_t*, GB_vblank_type_t)")
         def vblank_cb(gb, vblank_type):
             self._frame_count += 1
+            # Update live display if enabled
+            if self._live_display and self._live_display.is_running:
+                # vblank_type 0 = normal frame, skip others to avoid duplicate frames
+                if vblank_type == 0:
+                    pixels = self.get_screen_pixels()
+                    self._live_display.update_frame(pixels)
 
         self._callbacks["vblank"] = vblank_cb
         self.lib.GB_set_vblank_callback(self.gb, vblank_cb)
@@ -202,6 +214,11 @@ class SameBoyEmulator:
 
     def free(self) -> None:
         """Free emulator resources."""
+        # Stop live display if running
+        if self._live_display:
+            self._live_display.stop()
+            self._live_display = None
+
         if self.gb is not None and self.gb != ffi.NULL:
             self.lib.GB_free(self.gb)
             self.lib.GB_dealloc(self.gb)
@@ -643,4 +660,57 @@ class SameBoyEmulator:
             "trace_enabled": self._trace_enabled,
             "breakpoint_count": len(self._breakpoints),
             "monitored_addresses": len(self._memory_monitors),
+            "live_display": self._live_display.is_running if self._live_display else False,
         }
+
+    # ============ Live Display ============
+
+    def enable_live_display(self, scale: int = 2) -> bool:
+        """
+        Enable live display window showing frames in real-time.
+
+        Args:
+            scale: Display scaling factor (1-4)
+
+        Returns:
+            True if display was enabled successfully
+        """
+        from .display import LiveDisplay, is_available
+
+        if not is_available():
+            return False
+
+        if self._live_display and self._live_display.is_running:
+            return True  # Already running
+
+        width, height = self.get_screen_size()
+        title = f"SameBoy MCP - {self._rom_title}" if self._rom_title else "SameBoy MCP"
+
+        self._live_display = LiveDisplay(
+            width=width,
+            height=height,
+            scale=scale,
+            title=title
+        )
+
+        # Set up input callback to forward keyboard input to emulator
+        def on_input(key: str, pressed: bool):
+            try:
+                self.set_key(key, pressed)
+            except ValueError:
+                pass  # Ignore unknown keys
+
+        self._live_display.set_input_callback(on_input)
+        self._live_display.start()
+        return True
+
+    def disable_live_display(self) -> None:
+        """Disable and close the live display window."""
+        if self._live_display:
+            self._live_display.stop()
+            self._live_display = None
+
+    @property
+    def live_display_enabled(self) -> bool:
+        """Check if live display is enabled and running."""
+        return self._live_display is not None and self._live_display.is_running

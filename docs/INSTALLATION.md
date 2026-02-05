@@ -68,6 +68,12 @@ The shared library will be at:
 pip install mcp cffi pillow
 ```
 
+### Optional: Live Display Support
+For the real-time display window feature:
+```bash
+pip install pysdl2 pysdl2-dll
+```
+
 ### Using a Virtual Environment (Recommended)
 ```bash
 # Create virtual environment
@@ -80,12 +86,18 @@ source venv/bin/activate  # Linux/macOS
 
 # Install dependencies
 pip install mcp cffi pillow
+
+# Optional: Live display support
+pip install pysdl2 pysdl2-dll
 ```
 
 ### Using the Package
 ```bash
 # From the project directory
 pip install -e sameboy_mcp/
+
+# With live display support
+pip install -e "sameboy_mcp/[display]"
 ```
 
 ## Configuration
