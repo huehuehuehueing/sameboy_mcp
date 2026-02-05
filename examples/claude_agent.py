@@ -53,6 +53,7 @@ if not anthropic and not openai:
     sys.exit(1)
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.sse import sse_client
 from mcp import ClientSession
 
 
@@ -63,6 +64,10 @@ class ClaudeGameBoyAgent:
     Supports both:
     - Anthropic's native API (default)
     - OpenAI-compatible endpoints (for services like Dartmouth's chat.dartmouth.edu)
+
+    Can connect to MCP server via:
+    - Spawning a subprocess (default)
+    - Connecting to an existing SSE server (--server-url)
     """
 
     SYSTEM_PROMPT = """You are an AI agent controlling a Game Boy emulator through MCP (Model Context Protocol) tools.
@@ -96,27 +101,29 @@ For memory analysis:
 
 Be helpful and explain what you're doing. If something doesn't work, try alternative approaches."""
 
-    def __init__(self, lib_path: str, rom_path: str | None = None,
+    def __init__(self, lib_path: str | None = None, rom_path: str | None = None,
                  model: str = "CGB_E", claude_model: str = "claude-sonnet-4-20250514",
                  base_url: str | None = None, api_key: str | None = None,
-                 use_openai_compat: bool = False):
+                 use_openai_compat: bool = False, server_url: str | None = None):
         """
         Initialize the Claude agent.
 
         Args:
-            lib_path: Path to libsameboy.so
-            rom_path: Optional ROM to load on startup
-            model: Game Boy model
+            lib_path: Path to libsameboy.so (required unless server_url is provided)
+            rom_path: Optional ROM to load on startup (ignored if server_url is provided)
+            model: Game Boy model (ignored if server_url is provided)
             claude_model: Claude model to use
             base_url: Custom API base URL (for Dartmouth, etc.)
             api_key: API key (or use ANTHROPIC_API_KEY env var)
             use_openai_compat: Use OpenAI-compatible API (for services like Dartmouth)
+            server_url: URL of existing MCP server (e.g., http://localhost:8765/sse)
         """
         self.lib_path = lib_path
         self.rom_path = rom_path
         self.gb_model = model
         self.claude_model = claude_model
         self.use_openai_compat = use_openai_compat
+        self.server_url = server_url
 
         # MCP client state
         self._session: ClientSession | None = None
@@ -149,24 +156,38 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
         self.openai_tools: list[dict] = []  # OpenAI format tools
 
     async def connect(self) -> None:
-        """Connect to the MCP server."""
-        args = [
-            '-m', 'sameboy_mcp.server',
-            '--lib', self.lib_path,
-            '--model', self.gb_model,
-        ]
-        if self.rom_path:
-            args.extend(['--rom', self.rom_path])
+        """Connect to the MCP server (spawn or connect to existing)."""
+        if self.server_url:
+            # Connect to existing SSE server
+            self._client_ctx = sse_client(self.server_url)
+            read, write = await self._client_ctx.__aenter__()
+            self._session_ctx = ClientSession(read, write)
+        else:
+            # Spawn new server subprocess
+            if not self.lib_path:
+                raise RuntimeError("lib_path required when not using server_url")
 
-        server_params = StdioServerParameters(
-            command='python',
-            args=args,
-            cwd=str(Path(__file__).parent.parent)
-        )
+            args = [
+                '-m', 'sameboy_mcp.server',
+                '--lib', self.lib_path,
+                '--model', self.gb_model,
+            ]
+            if self.rom_path:
+                args.extend(['--rom', self.rom_path])
 
-        self._client_ctx = stdio_client(server_params)
-        read, write = await self._client_ctx.__aenter__()
-        self._session_ctx = ClientSession(read, write)
+            # Pass through environment variables needed for display
+            env = os.environ.copy()
+
+            server_params = StdioServerParameters(
+                command='python',
+                args=args,
+                cwd=str(Path(__file__).parent.parent),
+                env=env
+            )
+
+            self._client_ctx = stdio_client(server_params)
+            read, write = await self._client_ctx.__aenter__()
+            self._session_ctx = ClientSession(read, write)
         self._session = await self._session_ctx.__aenter__()
         await self._session.initialize()
 
@@ -508,9 +529,14 @@ async def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
-    parser.add_argument("--lib", default=None, help="Path to libsameboy.so")
-    parser.add_argument("--rom", "-r", required=True, help="ROM file to load")
+    # MCP server options (either spawn or connect)
+    parser.add_argument("--server-url", default=None,
+                        help="URL of existing MCP server (e.g., http://localhost:8765/sse)")
+    parser.add_argument("--lib", default=None, help="Path to libsameboy.so (not needed with --server-url)")
+    parser.add_argument("--rom", "-r", default=None, help="ROM file to load (not needed with --server-url)")
     parser.add_argument("--model", "-m", default="CGB_E", help="Game Boy model")
+
+    # Claude API options
     parser.add_argument("--claude-model", default="claude-sonnet-4-20250514",
                         help="Claude model to use")
     parser.add_argument("--base-url", default=None,
@@ -519,8 +545,10 @@ async def main():
                         help="API key (or use ANTHROPIC_API_KEY env var)")
     parser.add_argument("--openai-compat", action="store_true",
                         help="Use OpenAI-compatible API (for services like Dartmouth)")
+
+    # Display and mode options
     parser.add_argument("--display", "-d", action="store_true",
-                        help="Enable live display on startup")
+                        help="Enable live display on startup (only when spawning server)")
     parser.add_argument("-p", "--prompt", help="Single prompt (non-interactive)")
 
     args = parser.parse_args()
@@ -532,30 +560,46 @@ async def main():
         print("Use --api-key or set ANTHROPIC_API_KEY environment variable")
         sys.exit(1)
 
-    # Find libsameboy.so
-    lib_path = args.lib
-    if not lib_path:
-        default_path = Path(__file__).parent.parent / "sameboy_src/SameBoy-1.0.2/build/lib/libsameboy.so"
-        if default_path.exists():
-            lib_path = str(default_path)
-        else:
-            print("Error: Could not find libsameboy.so. Use --lib to specify path.")
+    # Determine connection mode
+    server_url = args.server_url
+    lib_path = None
+    rom_path = None
+
+    if server_url:
+        # Connecting to existing server - don't need lib/rom
+        print(f"Will connect to existing MCP server at: {server_url}")
+    else:
+        # Spawning new server - need lib and rom
+        lib_path = args.lib
+        if not lib_path:
+            default_path = Path(__file__).parent.parent / "sameboy_src/SameBoy-1.0.2/build/lib/libsameboy.so"
+            if default_path.exists():
+                lib_path = str(default_path)
+            else:
+                print("Error: Could not find libsameboy.so. Use --lib to specify path.")
+                sys.exit(1)
+
+        if not args.rom:
+            print("Error: --rom is required when spawning a new server")
+            print("Use --server-url to connect to an existing server instead")
             sys.exit(1)
 
-    # Validate ROM
-    if not Path(args.rom).exists():
-        print(f"Error: ROM file not found: {args.rom}")
-        sys.exit(1)
+        if not Path(args.rom).exists():
+            print(f"Error: ROM file not found: {args.rom}")
+            sys.exit(1)
+
+        rom_path = args.rom
 
     # Create agent
     agent = ClaudeGameBoyAgent(
         lib_path=lib_path,
-        rom_path=args.rom,
+        rom_path=rom_path,
         model=args.model,
         claude_model=args.claude_model,
         base_url=args.base_url,
         api_key=api_key,
-        use_openai_compat=args.openai_compat
+        use_openai_compat=args.openai_compat,
+        server_url=server_url
     )
 
     try:
@@ -563,8 +607,8 @@ async def main():
         await agent.connect()
         print(f"Connected! {len(agent.tools)} tools available.")
 
-        # Enable display if requested
-        if args.display:
+        # Enable display if requested (only makes sense when spawning server)
+        if args.display and not server_url:
             print("Enabling live display...")
             await agent.call_tool("enable_live_display", {"scale": 2})
 

@@ -248,6 +248,9 @@ async def run_server(
     rom_path: str | None = None,
     boot_rom_path: str | None = None,
     model: str = "CGB_E",
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8765,
 ) -> None:
     """
     Run the MCP server.
@@ -257,6 +260,9 @@ async def run_server(
         rom_path: Optional path to ROM file
         boot_rom_path: Optional path to boot ROM
         model: Game Boy model
+        transport: Transport type ("stdio" or "sse")
+        host: Host to bind SSE server (default: 127.0.0.1)
+        port: Port for SSE server (default: 8765)
     """
     server, emulator, emu_thread = create_server(
         lib_path=lib_path,
@@ -270,9 +276,20 @@ async def run_server(
     emu_thread.start()
 
     try:
-        # Run the MCP server
-        logger.info("Starting MCP server on stdio")
-        await server.run_stdio_async()
+        if transport == "sse":
+            # Run the MCP server with SSE transport using uvicorn
+            import uvicorn
+            logger.info(f"Starting MCP server on SSE at http://{host}:{port}/sse")
+            print(f"MCP Server running at: http://{host}:{port}/sse", file=sys.stderr)
+            print(f"Connect with: --server-url http://{host}:{port}/sse", file=sys.stderr)
+            app = server.sse_app()
+            config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+            uvicorn_server = uvicorn.Server(config)
+            await uvicorn_server.serve()
+        else:
+            # Run the MCP server with stdio transport
+            logger.info("Starting MCP server on stdio")
+            await server.run_stdio_async()
     finally:
         # Cleanup
         logger.info("Shutting down")
@@ -331,6 +348,23 @@ Examples:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--sse",
+        action="store_true",
+        help="Use SSE transport instead of stdio (allows external connections)",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host to bind SSE server (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port for SSE server (default: 8765)",
+    )
 
     args = parser.parse_args()
 
@@ -343,6 +377,9 @@ Examples:
             rom_path=args.rom,
             boot_rom_path=args.boot_rom,
             model=args.model,
+            transport="sse" if args.sse else "stdio",
+            host=args.host,
+            port=args.port,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
