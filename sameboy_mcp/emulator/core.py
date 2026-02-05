@@ -742,3 +742,217 @@ class SameBoyEmulator:
         if self._live_display and self._live_display.is_running:
             return self._live_display.user_input_enabled
         return False
+
+    # ============ ROM Disassembly ============
+
+    def disassemble_rom(self, start: int = 0, end: int | None = None, max_instructions: int = 1000) -> dict:
+        """
+        Disassemble a range of the loaded ROM using the full disassembler.
+
+        Args:
+            start: Starting address (default 0)
+            end: Ending address (default: based on max_instructions or ROM size)
+            max_instructions: Maximum instructions to disassemble
+
+        Returns:
+            Disassembly result with instructions and metadata
+        """
+        if not self._rom_loaded:
+            return {"error": "No ROM loaded"}
+
+        from .disasm import Disassembler
+
+        # Get ROM data via direct access
+        rom_data, bank = self.get_direct_access("rom")
+        if rom_data is None:
+            return {"error": "Failed to access ROM data"}
+
+        disasm = Disassembler(rom_data)
+
+        # Determine end address
+        if end is None:
+            # Estimate based on max_instructions (average ~2 bytes per instruction)
+            end = min(start + max_instructions * 3, len(rom_data))
+
+        instructions = []
+        addr = start
+        count = 0
+
+        for inst in disasm.disassemble_range(start, end):
+            instructions.append({
+                "address": f"0x{inst.address:04X}",
+                "bytes": inst.bytes.hex(),
+                "mnemonic": inst.mnemonic,
+                "operands": inst.operands,
+                "size": inst.size,
+                "is_jump": inst.is_jump,
+                "is_call": inst.is_call,
+                "is_return": inst.is_return,
+                "is_conditional": inst.is_conditional,
+                "jump_target": f"0x{inst.jump_target:04X}" if inst.jump_target else None,
+            })
+            count += 1
+            if count >= max_instructions:
+                break
+            addr = inst.address + inst.size
+
+        return {
+            "start": f"0x{start:04X}",
+            "end": f"0x{addr:04X}",
+            "instruction_count": len(instructions),
+            "instructions": instructions,
+            "rom_title": self._rom_title,
+        }
+
+    def disassemble_function(self, address: int, max_size: int = 256) -> dict:
+        """
+        Disassemble a function starting at address.
+
+        Args:
+            address: Starting address
+            max_size: Maximum bytes to disassemble
+
+        Returns:
+            Function disassembly with control flow info
+        """
+        if not self._rom_loaded:
+            return {"error": "No ROM loaded"}
+
+        from .disasm import Disassembler
+
+        # Get ROM data
+        rom_data, bank = self.get_direct_access("rom")
+        if rom_data is None:
+            return {"error": "Failed to access ROM data"}
+
+        disasm = Disassembler(rom_data)
+        insts = disasm.disassemble_function(address, max_size)
+
+        instructions = []
+        call_targets = []
+        jump_targets = []
+
+        for inst in insts:
+            instructions.append({
+                "address": f"0x{inst.address:04X}",
+                "bytes": inst.bytes.hex(),
+                "mnemonic": inst.mnemonic,
+                "operands": inst.operands,
+                "text": str(inst),
+            })
+
+            if inst.is_call and inst.jump_target:
+                call_targets.append(f"0x{inst.jump_target:04X}")
+            elif inst.is_jump and inst.jump_target:
+                jump_targets.append(f"0x{inst.jump_target:04X}")
+
+        return {
+            "address": f"0x{address:04X}",
+            "size": sum(len(i["bytes"]) // 2 for i in instructions),
+            "instruction_count": len(instructions),
+            "instructions": instructions,
+            "call_targets": list(set(call_targets)),
+            "jump_targets": list(set(jump_targets)),
+            "disassembly": "\n".join(str(i) for i in insts),
+        }
+
+    def get_rom_header(self) -> dict:
+        """
+        Get ROM header information.
+
+        Returns:
+            ROM header metadata
+        """
+        if not self._rom_loaded:
+            return {"error": "No ROM loaded"}
+
+        from .disasm import Disassembler
+
+        # Get ROM data
+        rom_data, bank = self.get_direct_access("rom")
+        if rom_data is None:
+            return {"error": "Failed to access ROM data"}
+
+        disasm = Disassembler(rom_data)
+        return disasm.get_rom_header()
+
+    def find_functions(self, scan_start: int | None = None, scan_end: int | None = None) -> dict:
+        """
+        Scan ROM for likely function entry points.
+
+        Args:
+            scan_start: Start of scan range (default: 0x0150)
+            scan_end: End of scan range (default: ROM size)
+
+        Returns:
+            List of potential function addresses
+        """
+        if not self._rom_loaded:
+            return {"error": "No ROM loaded"}
+
+        from .disasm import Disassembler, OPCODES
+
+        # Get ROM data
+        rom_data, bank = self.get_direct_access("rom")
+        if rom_data is None:
+            return {"error": "Failed to access ROM data"}
+
+        disasm = Disassembler(rom_data)
+
+        # Default scan range: after header to ROM end
+        if scan_start is None:
+            scan_start = 0x0150  # After ROM header
+        if scan_end is None:
+            scan_end = len(rom_data)
+
+        functions = []
+
+        # Standard entry points
+        known_entries = [
+            (0x0100, "Entry point"),
+            (0x0040, "VBlank handler"),
+            (0x0048, "LCD STAT handler"),
+            (0x0050, "Timer handler"),
+            (0x0058, "Serial handler"),
+            (0x0060, "Joypad handler"),
+        ]
+
+        for addr, name in known_entries:
+            if addr < len(rom_data):
+                inst = disasm.disassemble_one(addr)
+                functions.append({
+                    "address": f"0x{addr:04X}",
+                    "name": name,
+                    "first_instruction": f"{inst.mnemonic} {inst.operands}".strip(),
+                })
+
+        # Find CALL targets
+        call_targets = set()
+        for inst in disasm.disassemble_range(scan_start, scan_end):
+            if inst.is_call and inst.jump_target:
+                if scan_start <= inst.jump_target < scan_end:
+                    call_targets.add(inst.jump_target)
+
+        # Find PUSH-starting blocks (common function pattern)
+        push_opcodes = {0xC5, 0xD5, 0xE5, 0xF5}  # PUSH BC, DE, HL, AF
+
+        for addr in sorted(call_targets):
+            if addr < len(rom_data):
+                opcode = rom_data[addr]
+                inst = disasm.disassemble_one(addr)
+                pattern = "CALL target"
+                if opcode in push_opcodes:
+                    pattern += ", starts with PUSH"
+
+                functions.append({
+                    "address": f"0x{addr:04X}",
+                    "name": f"sub_{addr:04X}",
+                    "first_instruction": f"{inst.mnemonic} {inst.operands}".strip(),
+                    "pattern": pattern,
+                })
+
+        return {
+            "scan_range": f"0x{scan_start:04X}-0x{scan_end:04X}",
+            "function_count": len(functions),
+            "functions": functions,
+        }

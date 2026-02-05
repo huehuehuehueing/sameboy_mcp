@@ -38,7 +38,7 @@ from mcp.server.stdio import stdio_server
 
 from .emulator.core import SameBoyEmulator, EmulatorState
 from .emulator.thread import EmulatorThread, CommandType
-from .tools import memory, cpu, display, state, debug, control, monitor
+from .tools import memory, cpu, display, state, debug, control, monitor, disasm
 
 # Configure logging
 logging.basicConfig(
@@ -100,6 +100,7 @@ def create_server(
     debug.register_debug_tools(server, emu_thread)
     control.register_control_tools(server, emu_thread)
     monitor.register_monitor_tools(server, emu_thread)
+    disasm.register_disasm_tools(server, emu_thread)
 
     # Register server-level tools
     @server.tool()
@@ -185,7 +186,13 @@ def create_server(
                 ],
                 "CPU": [
                     "get_registers - Get CPU register values",
-                    "disassemble - Disassemble instructions",
+                    "disassemble - Disassemble at current PC",
+                ],
+                "ROM Disassembly": [
+                    "disassemble_rom - Disassemble ROM range",
+                    "disassemble_function - Disassemble a function",
+                    "get_rom_header - Get ROM metadata",
+                    "find_functions - Find function entry points",
                 ],
                 "Display": [
                     "capture_screen - Get screenshot as PNG",

@@ -78,6 +78,12 @@ class CommandType(Enum):
     DISABLE_LIVE_DISPLAY = auto()
     SET_USER_INPUT_ENABLED = auto()
 
+    # ROM disassembly
+    DISASSEMBLE_ROM = auto()
+    DISASSEMBLE_FUNCTION = auto()
+    GET_ROM_HEADER = auto()
+    FIND_FUNCTIONS = auto()
+
 
 @dataclass
 class Command:
@@ -381,6 +387,32 @@ class EmulatorThread:
                         "user_input_enabled": emu.user_input_enabled,
                         "live_display_active": emu.live_display_enabled
                     }
+
+                # ROM disassembly
+                case CommandType.DISASSEMBLE_ROM:
+                    result = emu.disassemble_rom(
+                        args.get("start", 0),
+                        args.get("end"),
+                        args.get("max_instructions", 1000)
+                    )
+                    return result
+
+                case CommandType.DISASSEMBLE_FUNCTION:
+                    result = emu.disassemble_function(
+                        args["address"],
+                        args.get("max_size", 256)
+                    )
+                    return result
+
+                case CommandType.GET_ROM_HEADER:
+                    return emu.get_rom_header()
+
+                case CommandType.FIND_FUNCTIONS:
+                    result = emu.find_functions(
+                        args.get("scan_start"),
+                        args.get("scan_end")
+                    )
+                    return result
 
                 case _:
                     return {"error": f"Unknown command type: {cmd.type}"}

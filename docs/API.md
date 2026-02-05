@@ -12,6 +12,7 @@ Complete documentation for all MCP tools provided by the SameBoy MCP Server.
 - [Save State Tools](#save-state-tools)
 - [Debug Tools](#debug-tools)
 - [Memory Monitoring Tools](#memory-monitoring-tools)
+- [ROM Disassembly Tools](#rom-disassembly-tools)
 
 ---
 
@@ -780,3 +781,118 @@ Search memory for a specific value.
   "truncated": false
 }
 ```
+
+---
+
+## ROM Disassembly Tools
+
+### `disassemble_rom`
+Disassemble a range of the loaded ROM.
+
+**Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `start` | int | 0 | Starting address |
+| `end` | int | null | Ending address |
+| `max_instructions` | int | 1000 | Maximum instructions (max 10000) |
+
+**Returns:**
+```json
+{
+  "start": "0x0000",
+  "end": "0x0300",
+  "instruction_count": 150,
+  "instructions": [
+    {
+      "address": "0x0100",
+      "bytes": "00",
+      "mnemonic": "NOP",
+      "operands": "",
+      "size": 1,
+      "is_jump": false,
+      "is_call": false,
+      "is_return": false,
+      "is_conditional": false,
+      "jump_target": null
+    }
+  ],
+  "rom_title": "POKEMON YELLOW"
+}
+```
+
+### `disassemble_function`
+Disassemble a function starting at address.
+
+Follows linear code flow until an unconditional return (RET/RETI) or
+unconditional jump is encountered.
+
+**Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `address` | int | required | Function start address |
+| `max_size` | int | 256 | Maximum bytes to disassemble (max 4096) |
+
+**Returns:**
+```json
+{
+  "address": "0x0150",
+  "size": 48,
+  "instruction_count": 20,
+  "instructions": [...],
+  "call_targets": ["0x1234", "0x5678"],
+  "jump_targets": ["0x0160", "0x0170"],
+  "disassembly": "0x0150: PUSH BC\n0x0151: LD A, $00\n..."
+}
+```
+
+### `get_rom_header`
+Get ROM header information.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "title": "POKEMON YELLOW",
+  "cartridge_type": "MBC5+RAM+BATTERY",
+  "rom_size": "1MB",
+  "ram_size": "32KB",
+  "cgb_support": "CGB Compatible",
+  "entry_point": "0x00 0xC3 0x50 0x01",
+  "header_checksum": "0x7F",
+  "global_checksum": "0x1234"
+}
+```
+
+### `find_functions`
+Scan ROM for likely function entry points.
+
+Identifies potential functions by looking for:
+- PUSH instructions at the start
+- Addresses called via CALL instructions
+- Interrupt handlers and RST vectors
+
+**Parameters:**
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `scan_range` | tuple | null | Optional (start, end) to limit scan |
+
+**Returns:**
+```json
+{
+  "scan_range": "0x0150-0x8000",
+  "function_count": 42,
+  "functions": [
+    {
+      "address": "0x0100",
+      "name": "Entry point",
+      "first_instruction": "NOP"
+    },
+    {
+      "address": "0x0150",
+      "name": "sub_0150",
+      "first_instruction": "PUSH BC",
+      "pattern": "CALL target, starts with PUSH"
+    }
+  ]
+}
