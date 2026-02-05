@@ -164,6 +164,7 @@ WRAM_ENEMY_MON_ATTACK = 0xCFF5   # 2 bytes
 WRAM_ENEMY_MON_DEFENSE = 0xCFF7  # 2 bytes
 WRAM_ENEMY_MON_SPEED = 0xCFF9    # 2 bytes
 WRAM_ENEMY_MON_SPECIAL = 0xCFFB  # 2 bytes
+WRAM_ENEMY_MON_PP = 0xCFFD        # 4 bytes (PP for moves 1-4)
 WRAM_ENEMY_MON_CATCH_RATE = 0xD006  # Actual catch rate
 
 # Battle stat modifiers (stored as 1-13, 7=neutral)
@@ -184,6 +185,27 @@ WRAM_ENEMY_BATTLE_STATUS1 = 0xD066
 WRAM_ENEMY_BATTLE_STATUS2 = 0xD067
 WRAM_ENEMY_BATTLE_STATUS3 = 0xD068
 
+# Battle status 1 bits (applies to both player and enemy)
+BSTATUS1_BIDE = 0x01              # Using Bide
+BSTATUS1_THRASH_PETAL = 0x02      # Thrashing / Petal Dance
+BSTATUS1_CHARGING = 0x04          # Charging (Solar Beam, Skull Bash, etc.)
+BSTATUS1_MULTI_HIT = 0x08         # Multi-hit move in progress
+BSTATUS1_FLINCH = 0x10            # Flinched
+BSTATUS1_RECHARGING = 0x20        # Recharging (Hyper Beam)
+BSTATUS1_RAGE = 0x40              # Using Rage
+BSTATUS1_SUBSTITUTE = 0x80        # Has Substitute
+
+# Battle status 2 bits
+BSTATUS2_X_ACCURACY = 0x01        # X Accuracy active
+BSTATUS2_PROTECTED = 0x02         # Protected by Mist/etc.
+BSTATUS2_FOCUS_ENERGY = 0x04      # Focus Energy active
+BSTATUS2_CONFUSED = 0x80          # Confused
+
+# Battle status 3 bits
+BSTATUS3_REFLECT = 0x01           # Reflect active
+BSTATUS3_LIGHT_SCREEN = 0x02      # Light Screen active
+BSTATUS3_TRANSFORMED = 0x08       # Transformed (Transform)
+
 # Move selection
 WRAM_PLAYER_SELECTED_MOVE = 0xCCDC
 WRAM_ENEMY_SELECTED_MOVE = 0xCCDD
@@ -193,6 +215,62 @@ HRAM_WHOSE_TURN = 0xFFF3          # 0=player, 1=enemy
 WRAM_TRAINER_CLASS = 0xD030
 WRAM_CUR_ENEMY_LVL = 0xD126
 WRAM_ENEMY_PARTY_COUNT = 0xD89B
+
+# ============================================================
+# Battle Memory Reference (for LLM context)
+# ============================================================
+
+BATTLE_MEMORY_REFERENCE = {
+    "player_active_mon": {
+        "species": ("$D013", "WRAM_BATTLE_MON_SPECIES"),
+        "hp": ("$D014", "WRAM_BATTLE_MON_HP (2 bytes BE)"),
+        "status": ("$D017", "WRAM_BATTLE_MON_STATUS"),
+        "type1": ("$D018", "WRAM_BATTLE_MON_TYPE1"),
+        "type2": ("$D019", "WRAM_BATTLE_MON_TYPE2"),
+        "moves": ("$D01B", "WRAM_BATTLE_MON_MOVES (4 bytes)"),
+        "level": ("$D021", "WRAM_BATTLE_MON_LEVEL"),
+        "max_hp": ("$D022", "WRAM_BATTLE_MON_MAX_HP (2 bytes BE)"),
+        "attack": ("$D024", "WRAM_BATTLE_MON_ATTACK (2 bytes BE)"),
+        "defense": ("$D026", "WRAM_BATTLE_MON_DEFENSE (2 bytes BE)"),
+        "speed": ("$D028", "WRAM_BATTLE_MON_SPEED (2 bytes BE)"),
+        "special": ("$D02A", "WRAM_BATTLE_MON_SPECIAL (2 bytes BE)"),
+        "pp": ("$D02C", "WRAM_BATTLE_MON_PP (4 bytes)"),
+    },
+    "enemy_active_mon": {
+        "species": ("$CFE4", "WRAM_ENEMY_MON_SPECIES"),
+        "hp": ("$CFE5", "WRAM_ENEMY_MON_HP (2 bytes BE)"),
+        "status": ("$CFE8", "WRAM_ENEMY_MON_STATUS"),
+        "type1": ("$CFE9", "WRAM_ENEMY_MON_TYPE1"),
+        "type2": ("$CFEA", "WRAM_ENEMY_MON_TYPE2"),
+        "moves": ("$CFEC", "WRAM_ENEMY_MON_MOVES (4 bytes)"),
+        "level": ("$CFF2", "WRAM_ENEMY_MON_LEVEL"),
+        "max_hp": ("$CFF3", "WRAM_ENEMY_MON_MAX_HP (2 bytes BE)"),
+        "attack": ("$CFF5", "WRAM_ENEMY_MON_ATTACK (2 bytes BE)"),
+        "defense": ("$CFF7", "WRAM_ENEMY_MON_DEFENSE (2 bytes BE)"),
+        "speed": ("$CFF9", "WRAM_ENEMY_MON_SPEED (2 bytes BE)"),
+        "special": ("$CFFB", "WRAM_ENEMY_MON_SPECIAL (2 bytes BE)"),
+        "pp": ("$CFFD", "WRAM_ENEMY_MON_PP (4 bytes)"),
+        "catch_rate": ("$D006", "WRAM_ENEMY_MON_CATCH_RATE"),
+    },
+    "stat_modifiers": {
+        "player_atk": ("$CD1E", "1-13, 7=neutral"),
+        "player_def": ("$CD1F", "1-13, 7=neutral"),
+        "player_spd": ("$CD20", "1-13, 7=neutral"),
+        "player_spc": ("$CD21", "1-13, 7=neutral"),
+        "enemy_atk": ("$CD2E", "1-13, 7=neutral"),
+        "enemy_def": ("$CD2F", "1-13, 7=neutral"),
+        "enemy_spd": ("$CD30", "1-13, 7=neutral"),
+        "enemy_spc": ("$CD31", "1-13, 7=neutral"),
+    },
+    "battle_flags": {
+        "is_in_battle": ("$D056", "0=no, 1=wild, 2=trainer, 0xFF=lost"),
+        "trainer_class": ("$D030", "WRAM_TRAINER_CLASS"),
+        "enemy_party_count": ("$D89B", "WRAM_ENEMY_PARTY_COUNT"),
+        "damage": ("$D0D6", "WRAM_DAMAGE (2 bytes)"),
+        "critical_hit": ("$D05D", "WRAM_CRITICAL_HIT flags"),
+        "move_missed": ("$D05E", "WRAM_MOVE_MISSED"),
+    },
+}
 
 # ============================================================
 # Menu & UI State

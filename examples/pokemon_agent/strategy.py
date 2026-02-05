@@ -24,6 +24,7 @@ from .cache import (
     make_strategy_cache_key,
 )
 from .game_state import GameState, BattleState, Pokemon
+from . import memory_map as mem
 
 
 BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle strategist for Pokemon Yellow.
@@ -41,7 +42,11 @@ Consider:
 - HP levels (heal or switch if low)
 - PP remaining (don't use moves with 0 PP)
 - Status conditions
-- Run from wild battles if party is weak and the wild Pokemon isn't valuable"""
+- Run from wild battles if party is weak and the wild Pokemon isn't valuable
+- Enemy's known moves and their type/power — choose moves that resist their attacks
+- Stat modifiers: stages above 7 = boosted, below 7 = lowered (Gen 1 scale 1-13)
+- Battle effects like Reflect, Light Screen, Substitute change damage calculations
+- In trainer battles, consider enemy party size to manage resources"""
 
 STRATEGY_SYSTEM_PROMPT = """You are an autonomous Pokemon Yellow player.
 Given the current game state, decide what to do next.
@@ -240,30 +245,104 @@ class StrategyEngine:
             return self._parse_json_response(cached)
 
         # Build battle context for LLM
+        # Load move data for detailed info
+        try:
+            from . import pokemon_data as pdata
+            move_db = pdata.MOVES
+            type_names = pdata.TYPE_NAMES
+        except ImportError:
+            move_db = {}
+            type_names = {}
+
+        def describe_move(move_id, move_name, pp):
+            info = move_db.get(move_id, {})
+            mtype = info.get("type", "???")
+            power = info.get("power", 0)
+            acc = info.get("accuracy", 0)
+            if power > 0:
+                return f"{move_name} ({mtype}, pwr:{power}, acc:{acc}, PP:{pp})"
+            elif move_id > 0:
+                return f"{move_name} ({mtype}, status, acc:{acc}, PP:{pp})"
+            return None
+
         moves_desc = []
         for i, (move_id, move_name, pp) in enumerate(
             zip(my.moves, my.move_names, my.pp)
         ):
-            if move_id > 0:
-                moves_desc.append(f"  {i}: {move_name} (PP: {pp})")
+            desc = describe_move(move_id, move_name, pp)
+            if desc:
+                moves_desc.append(f"  {i}: {desc}")
+
+        # Enemy moves with full details
+        enemy_moves_desc = []
+        for i, (move_id, move_name, pp) in enumerate(
+            zip(enemy.moves, enemy.move_names, enemy.pp)
+        ):
+            desc = describe_move(move_id, move_name, pp)
+            if desc:
+                enemy_moves_desc.append(f"  {i}: {desc}")
 
         alive_party = [
             f"  {i}: {p.species_name} Lv{p.level} HP:{p.hp}/{p.max_hp} [{p.status_name}]"
             for i, p in enumerate(state.party) if p.is_alive
         ]
 
+        # Type names for display
+        my_type1 = type_names.get(my.type1, f"type_{my.type1}")
+        my_type2 = type_names.get(my.type2, f"type_{my.type2}")
+        en_type1 = type_names.get(enemy.type1, f"type_{enemy.type1}")
+        en_type2 = type_names.get(enemy.type2, f"type_{enemy.type2}")
+
+        my_types = my_type1 if my_type1 == my_type2 else f"{my_type1}/{my_type2}"
+        en_types = en_type1 if en_type1 == en_type2 else f"{en_type1}/{en_type2}"
+
+        # Stat modifiers
+        my_mods = state.battle.my_stat_mods.describe("My mods: ")
+        en_mods = state.battle.enemy_stat_mods.describe("Enemy mods: ")
+
+        # Battle effects
+        my_effects = state.battle.my_battle_effects
+        en_effects = state.battle.enemy_battle_effects
+        my_effects_str = f"My effects: {', '.join(my_effects)}" if my_effects else ""
+        en_effects_str = f"Enemy effects: {', '.join(en_effects)}" if en_effects else ""
+
+        # Stats
+        my_stats = f"ATK:{my.attack} DEF:{my.defense} SPD:{my.speed} SPC:{my.special}"
+        en_stats = f"ATK:{enemy.attack} DEF:{enemy.defense} SPD:{enemy.speed} SPC:{enemy.special}"
+
         user_msg = f"""Battle state:
-My Pokemon: {my.species_name} Lv{my.level} HP:{my.hp}/{my.max_hp} [{my.status_name}]
+My Pokemon: {my.species_name} Lv{my.level} [{my_types}] HP:{my.hp}/{my.max_hp} [{my.status_name}]
+My stats: {my_stats}
+{my_mods}
 My moves:
 {chr(10).join(moves_desc)}
 
-Enemy: {enemy.species_name} Lv{enemy.level} HP:{enemy.hp}/{enemy.max_hp} [{enemy.status_name}]
-Battle type: {"Wild" if state.battle.is_wild else "Trainer"}
+Enemy: {enemy.species_name} Lv{enemy.level} [{en_types}] HP:{enemy.hp}/{enemy.max_hp} [{enemy.status_name}]
+Enemy stats: {en_stats}
+{en_mods}
+Enemy moves (read from memory $CFEC):
+{chr(10).join(enemy_moves_desc) if enemy_moves_desc else "  (no moves detected)"}
+
+Battle type: {"Wild" if state.battle.is_wild else "Trainer"}"""
+
+        if not state.battle.is_wild:
+            user_msg += f"\nTrainer class: {state.battle.trainer_class}, Enemy party size: {state.battle.enemy_party_count}"
+        if state.battle.is_wild and state.battle.catch_rate > 0:
+            user_msg += f"\nCatch rate: {state.battle.catch_rate}/255"
+
+        if my_effects_str:
+            user_msg += f"\n{my_effects_str}"
+        if en_effects_str:
+            user_msg += f"\n{en_effects_str}"
+
+        user_msg += f"""
 
 My alive party:
 {chr(10).join(alive_party)}
 
-Badges: {state.badge_count}/8"""
+Badges: {state.badge_count}/8
+
+Memory reference: Enemy data at $CFE4-$D006 (species=$CFE4, HP=$CFE5, moves=$CFEC, stats=$CFF5-$CFFB, catch_rate=$D006). Stat mods at $CD2E-$CD31 (7=neutral)."""
 
         # Add vision analysis if available
         if screenshot_b64 and self._vision_client:

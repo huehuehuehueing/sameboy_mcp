@@ -75,6 +75,27 @@ class Pokemon:
 
 
 @dataclass
+class StatModifiers:
+    """Battle stat stage modifiers (1-13, 7=neutral)."""
+    attack: int = 7
+    defense: int = 7
+    speed: int = 7
+    special: int = 7
+
+    def describe(self, prefix: str = "") -> str:
+        """Return human-readable string of non-neutral modifiers."""
+        parts = []
+        for name, val in [("ATK", self.attack), ("DEF", self.defense),
+                          ("SPD", self.speed), ("SPC", self.special)]:
+            if val != 7:
+                sign = "+" if val > 7 else ""
+                parts.append(f"{name}{sign}{val - 7}")
+        if not parts:
+            return f"{prefix}no modifiers" if prefix else "no modifiers"
+        return f"{prefix}{', '.join(parts)}"
+
+
+@dataclass
 class BattleState:
     """Current battle information."""
     is_wild: bool                # True=wild, False=trainer
@@ -82,17 +103,79 @@ class BattleState:
     enemy_pokemon: Pokemon | None
     turn_number: int = 0
 
+    # Enemy details
+    enemy_party_count: int = 0   # Number of Pokemon on enemy trainer's team
+    trainer_class: int = 0       # Trainer class ID (0 for wild)
+    catch_rate: int = 0          # Enemy's catch rate (wild only)
+
+    # Stat modifiers for active battle mons
+    my_stat_mods: StatModifiers = field(default_factory=StatModifiers)
+    enemy_stat_mods: StatModifiers = field(default_factory=StatModifiers)
+
+    # Battle status flags (raw bytes)
+    my_battle_status: tuple[int, int, int] = (0, 0, 0)
+    enemy_battle_status: tuple[int, int, int] = (0, 0, 0)
+
+    def _describe_battle_status(self, status: tuple[int, int, int]) -> list[str]:
+        """Decode battle status flag bytes into human-readable effects."""
+        s1, s2, s3 = status
+        effects = []
+        if s1 & mem.BSTATUS1_SUBSTITUTE:
+            effects.append("Substitute")
+        if s1 & mem.BSTATUS1_RECHARGING:
+            effects.append("Recharging")
+        if s1 & mem.BSTATUS1_RAGE:
+            effects.append("Rage")
+        if s1 & mem.BSTATUS1_FLINCH:
+            effects.append("Flinch")
+        if s1 & mem.BSTATUS1_CHARGING:
+            effects.append("Charging")
+        if s1 & mem.BSTATUS1_BIDE:
+            effects.append("Bide")
+        if s2 & mem.BSTATUS2_CONFUSED:
+            effects.append("Confused")
+        if s2 & mem.BSTATUS2_FOCUS_ENERGY:
+            effects.append("FocusEnergy")
+        if s2 & mem.BSTATUS2_X_ACCURACY:
+            effects.append("XAccuracy")
+        if s3 & mem.BSTATUS3_REFLECT:
+            effects.append("Reflect")
+        if s3 & mem.BSTATUS3_LIGHT_SCREEN:
+            effects.append("LightScreen")
+        if s3 & mem.BSTATUS3_TRANSFORMED:
+            effects.append("Transformed")
+        return effects
+
+    @property
+    def my_battle_effects(self) -> list[str]:
+        return self._describe_battle_status(self.my_battle_status)
+
+    @property
+    def enemy_battle_effects(self) -> list[str]:
+        return self._describe_battle_status(self.enemy_battle_status)
+
     @property
     def summary(self) -> str:
         if not self.my_pokemon or not self.enemy_pokemon:
             return "battle (no data)"
-        return (
+        parts = [
             f"{'Wild' if self.is_wild else 'Trainer'} battle: "
             f"{self.my_pokemon.species_name} Lv{self.my_pokemon.level} "
             f"({self.my_pokemon.hp}/{self.my_pokemon.max_hp}) vs "
             f"{self.enemy_pokemon.species_name} Lv{self.enemy_pokemon.level} "
             f"({self.enemy_pokemon.hp}/{self.enemy_pokemon.max_hp})"
-        )
+        ]
+        if not self.is_wild:
+            parts.append(f"  Trainer class: {self.trainer_class}, enemy party: {self.enemy_party_count}")
+        if self.is_wild and self.catch_rate > 0:
+            parts.append(f"  Catch rate: {self.catch_rate}/255")
+        my_effects = self.my_battle_effects
+        enemy_effects = self.enemy_battle_effects
+        if my_effects:
+            parts.append(f"  My effects: {', '.join(my_effects)}")
+        if enemy_effects:
+            parts.append(f"  Enemy effects: {', '.join(enemy_effects)}")
+        return "\n".join(parts)
 
 
 @dataclass
@@ -286,6 +369,7 @@ class GameStateReader:
             type1 = await self._read_byte(mem.WRAM_ENEMY_MON_TYPE1)
             type2 = await self._read_byte(mem.WRAM_ENEMY_MON_TYPE2)
             move_data = await self._read(mem.WRAM_ENEMY_MON_MOVES, 4)
+            pp_data = await self._read(mem.WRAM_ENEMY_MON_PP, 4)
             attack = await self._read_word(mem.WRAM_ENEMY_MON_ATTACK)
             defense = await self._read_word(mem.WRAM_ENEMY_MON_DEFENSE)
             speed = await self._read_word(mem.WRAM_ENEMY_MON_SPEED)
@@ -299,12 +383,14 @@ class GameStateReader:
             type1 = await self._read_byte(mem.WRAM_BATTLE_MON_TYPE1)
             type2 = await self._read_byte(mem.WRAM_BATTLE_MON_TYPE2)
             move_data = await self._read(mem.WRAM_BATTLE_MON_MOVES, 4)
+            pp_data = await self._read(mem.WRAM_BATTLE_MON_PP, 4)
             attack = await self._read_word(mem.WRAM_BATTLE_MON_ATTACK)
             defense = await self._read_word(mem.WRAM_BATTLE_MON_DEFENSE)
             speed = await self._read_word(mem.WRAM_BATTLE_MON_SPEED)
             special = await self._read_word(mem.WRAM_BATTLE_MON_SPECIAL)
 
         moves = list(move_data) if move_data else [0, 0, 0, 0]
+        pp = list(pp_data) if pp_data else [0, 0, 0, 0]
 
         return Pokemon(
             species=species,
@@ -314,7 +400,7 @@ class GameStateReader:
             max_hp=max_hp,
             moves=moves,
             move_names=[self._move_name(m) for m in moves],
-            pp=[0, 0, 0, 0],  # PP not easily readable for battle mons
+            pp=pp,
             status=status,
             type1=type1,
             type2=type2,
@@ -403,10 +489,45 @@ class GameStateReader:
         if mode == GameMode.BATTLE:
             my_mon = await self._read_battle_pokemon(is_enemy=False)
             enemy_mon = await self._read_battle_pokemon(is_enemy=True)
+
+            # Read stat modifiers (1-13, 7=neutral)
+            my_stat_mods = StatModifiers(
+                attack=await self._read_byte(mem.WRAM_PLAYER_ATK_MOD),
+                defense=await self._read_byte(mem.WRAM_PLAYER_DEF_MOD),
+                speed=await self._read_byte(mem.WRAM_PLAYER_SPD_MOD),
+                special=await self._read_byte(mem.WRAM_PLAYER_SPC_MOD),
+            )
+            enemy_stat_mods = StatModifiers(
+                attack=await self._read_byte(mem.WRAM_ENEMY_ATK_MOD),
+                defense=await self._read_byte(mem.WRAM_ENEMY_DEF_MOD),
+                speed=await self._read_byte(mem.WRAM_ENEMY_SPD_MOD),
+                special=await self._read_byte(mem.WRAM_ENEMY_SPC_MOD),
+            )
+
+            # Read battle status flags
+            my_bs1 = await self._read_byte(mem.WRAM_PLAYER_BATTLE_STATUS1)
+            my_bs2 = await self._read_byte(mem.WRAM_PLAYER_BATTLE_STATUS2)
+            my_bs3 = await self._read_byte(mem.WRAM_PLAYER_BATTLE_STATUS3)
+            en_bs1 = await self._read_byte(mem.WRAM_ENEMY_BATTLE_STATUS1)
+            en_bs2 = await self._read_byte(mem.WRAM_ENEMY_BATTLE_STATUS2)
+            en_bs3 = await self._read_byte(mem.WRAM_ENEMY_BATTLE_STATUS3)
+
+            # Trainer/catch info
+            trainer_class = await self._read_byte(mem.WRAM_TRAINER_CLASS)
+            enemy_party_count = await self._read_byte(mem.WRAM_ENEMY_PARTY_COUNT)
+            catch_rate = await self._read_byte(mem.WRAM_ENEMY_MON_CATCH_RATE)
+
             battle = BattleState(
                 is_wild=(in_battle == 1),
                 my_pokemon=my_mon,
                 enemy_pokemon=enemy_mon,
+                enemy_party_count=enemy_party_count,
+                trainer_class=trainer_class,
+                catch_rate=catch_rate,
+                my_stat_mods=my_stat_mods,
+                enemy_stat_mods=enemy_stat_mods,
+                my_battle_status=(my_bs1, my_bs2, my_bs3),
+                enemy_battle_status=(en_bs1, en_bs2, en_bs3),
             )
 
         return GameState(
