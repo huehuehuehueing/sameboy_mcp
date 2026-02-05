@@ -464,6 +464,32 @@ Close the live display window.
 }
 ```
 
+### `set_user_input`
+Enable or disable user keyboard input on the live display.
+
+When disabled, keyboard input from the display window is blocked, allowing
+agents to perform automated operations without user interference. Useful for:
+- Running automated input sequences
+- Performing memory analysis requiring specific game states
+- Executing precise frame-by-frame operations
+
+Any pressed keys are automatically released when disabling.
+
+**Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| `enabled` | bool | True to allow input, False to block |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "user_input_enabled": false,
+  "live_display_active": true,
+  "message": "User keyboard input disabled."
+}
+```
+
 ---
 
 ## Save State Tools

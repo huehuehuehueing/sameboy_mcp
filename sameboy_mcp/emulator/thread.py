@@ -76,6 +76,7 @@ class CommandType(Enum):
     # Live display
     ENABLE_LIVE_DISPLAY = auto()
     DISABLE_LIVE_DISPLAY = auto()
+    SET_USER_INPUT_ENABLED = auto()
 
 
 @dataclass
@@ -372,6 +373,14 @@ class EmulatorThread:
                 case CommandType.DISABLE_LIVE_DISPLAY:
                     emu.disable_live_display()
                     return {"success": True, "enabled": False}
+
+                case CommandType.SET_USER_INPUT_ENABLED:
+                    success = emu.set_user_input_enabled(args["enabled"])
+                    return {
+                        "success": success,
+                        "user_input_enabled": emu.user_input_enabled,
+                        "live_display_active": emu.live_display_enabled
+                    }
 
                 case _:
                     return {"error": f"Unknown command type: {cmd.type}"}

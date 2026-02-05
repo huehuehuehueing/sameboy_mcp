@@ -56,6 +56,13 @@ class LiveDisplay:
         # Callback for input events
         self._input_callback: Optional[Callable[[str, bool], None]] = None
 
+        # User input control - when False, keyboard input is blocked
+        # This allows agents to prevent user interference during operations
+        self._user_input_enabled = True
+
+        # Track currently pressed keys (for proper release on disable)
+        self._pressed_keys: set[str] = set()
+
     def start(self) -> None:
         """Start the display window in a separate thread."""
         if self._running:
@@ -104,6 +111,31 @@ class LiveDisplay:
             callback: Function called with (key_name, pressed) for each input event
         """
         self._input_callback = callback
+
+    def set_user_input_enabled(self, enabled: bool) -> None:
+        """
+        Enable or disable user keyboard input.
+
+        When disabled, keyboard input from the display window is blocked,
+        allowing agents to perform operations without user interference.
+        Any currently pressed keys are released when disabling.
+
+        Args:
+            enabled: Whether to allow user keyboard input
+        """
+        if not enabled and self._user_input_enabled:
+            # Release any currently pressed keys before disabling
+            for key in list(self._pressed_keys):
+                if self._input_callback:
+                    self._input_callback(key, False)
+            self._pressed_keys.clear()
+
+        self._user_input_enabled = enabled
+
+    @property
+    def user_input_enabled(self) -> bool:
+        """Check if user keyboard input is enabled."""
+        return self._user_input_enabled
 
     def resize(self, width: int, height: int) -> None:
         """Resize the display for different screen modes (e.g., SGB)."""
@@ -232,12 +264,24 @@ class LiveDisplay:
                 self._running = False
             return
 
-        # Handle keyboard input
+        # Handle keyboard input (only if user input is enabled)
         if event.type in (sdl2.SDL_KEYDOWN, sdl2.SDL_KEYUP):
+            # Skip if user input is disabled
+            if not self._user_input_enabled:
+                return
+
             pressed = event.type == sdl2.SDL_KEYDOWN
             key = self._sdl_key_to_gb_key(event.key.keysym.sym)
-            if key and self._input_callback:
-                self._input_callback(key, pressed)
+            if key:
+                # Track pressed keys
+                if pressed:
+                    self._pressed_keys.add(key)
+                else:
+                    self._pressed_keys.discard(key)
+
+                # Forward to callback
+                if self._input_callback:
+                    self._input_callback(key, pressed)
 
     def _sdl_key_to_gb_key(self, sdl_key: int) -> Optional[str]:
         """Convert SDL key code to Game Boy button name."""

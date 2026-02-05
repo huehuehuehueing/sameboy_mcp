@@ -716,3 +716,29 @@ class SameBoyEmulator:
     def live_display_enabled(self) -> bool:
         """Check if live display is enabled and running."""
         return self._live_display is not None and self._live_display.is_running
+
+    def set_user_input_enabled(self, enabled: bool) -> bool:
+        """
+        Enable or disable user keyboard input on the live display.
+
+        When disabled, keyboard input from the display window is blocked,
+        allowing agents to perform automated operations without user
+        interference. Any currently pressed keys are released when disabling.
+
+        Args:
+            enabled: Whether to allow user keyboard input
+
+        Returns:
+            True if the setting was applied, False if no live display
+        """
+        if self._live_display and self._live_display.is_running:
+            self._live_display.set_user_input_enabled(enabled)
+            return True
+        return False
+
+    @property
+    def user_input_enabled(self) -> bool:
+        """Check if user keyboard input is enabled on the live display."""
+        if self._live_display and self._live_display.is_running:
+            return self._live_display.user_input_enabled
+        return False

@@ -312,3 +312,39 @@ def register_control_tools(server: Server, emu_thread: EmulatorThread) -> None:
             "enabled": False,
             "message": "Live display window closed."
         }
+
+    @server.tool()
+    async def set_user_input(enabled: bool) -> dict:
+        """
+        Enable or disable user keyboard input on the live display.
+
+        When disabled, keyboard input from the display window is blocked,
+        allowing agents to perform automated analysis or operations without
+        user interference. This is useful when:
+        - Running automated input sequences
+        - Performing memory analysis that requires specific game states
+        - Executing precise frame-by-frame operations
+
+        Any currently pressed keys are automatically released when disabling
+        to prevent stuck inputs.
+
+        Args:
+            enabled: True to allow user input, False to block it
+
+        Returns:
+            Status of user input setting
+        """
+        result = emu_thread.send_command(CommandType.SET_USER_INPUT_ENABLED, {
+            "enabled": enabled
+        })
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        status = "enabled" if result.get("user_input_enabled") else "disabled"
+        return {
+            "success": result.get("success", False),
+            "user_input_enabled": result.get("user_input_enabled", False),
+            "live_display_active": result.get("live_display_active", False),
+            "message": f"User keyboard input {status}."
+        }
