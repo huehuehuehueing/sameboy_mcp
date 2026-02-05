@@ -112,7 +112,7 @@ project_sameboy/
 ## Contributors
 
 - **Larry H** (Dartmouth College) - Primary author
-- **Way Barrios** - AI Wizard
+- **Way Barrios** (@waybarrios) - AI Wizard
 
 ## License
 
