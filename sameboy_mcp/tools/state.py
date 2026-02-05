@@ -1,3 +1,5 @@
+# Copyright (c) 2025 Larry H (l.gr [at] dartmouth [dot] edu)
+# SPDX-License-Identifier: MIT
 """Save state MCP tools."""
 
 import base64

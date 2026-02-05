@@ -1,3 +1,5 @@
+# Copyright (c) 2025 Larry H (l.gr [at] dartmouth [dot] edu)
+# SPDX-License-Identifier: MIT
 """SameBoy emulator wrapper class."""
 
 from dataclasses import dataclass, field

@@ -1,3 +1,5 @@
+# Copyright (c) 2025 Larry H (l.gr [at] dartmouth [dot] edu)
+# SPDX-License-Identifier: MIT
 """SDL2-based live display window for the emulator."""
 
 import threading
