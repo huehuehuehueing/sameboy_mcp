@@ -46,6 +46,7 @@ except ImportError:
 
 from examples.pokemon_agent.config import AgentConfig, PROVIDERS
 from examples.pokemon_agent.game_state import GameStateReader, GameMode
+from examples.pokemon_agent.game_analysis import GameAnalyzer
 from examples.pokemon_agent.routines import Routines
 from examples.pokemon_agent.strategy import StrategyEngine
 
@@ -65,6 +66,7 @@ class PokemonAgent:
         self._state_reader: GameStateReader | None = None
         self._routines: Routines | None = None
         self._strategy: StrategyEngine | None = None
+        self._analyzer: GameAnalyzer | None = None
 
     async def call_tool(self, name: str, args: dict):
         """Call an MCP tool and return result."""
@@ -124,7 +126,11 @@ class PokemonAgent:
             self._state_reader,
             verbose=self.config.verbose,
         )
-        self._strategy = StrategyEngine(self.config)
+        self._analyzer = GameAnalyzer(
+            self.call_tool,
+            verbose=self.config.verbose,
+        )
+        self._strategy = StrategyEngine(self.config, self._analyzer)
 
     async def disconnect(self):
         """Disconnect from MCP server."""
@@ -153,6 +159,13 @@ class PokemonAgent:
         if isinstance(status, dict):
             print(f"ROM: {status.get('rom_title', 'Unknown')}")
             print(f"Model: CGB_E | Frame: {status.get('frame_count', 0)}")
+
+        # Run startup ROM analysis
+        print("Analyzing ROM...")
+        analysis = await self._analyzer.startup_analysis()
+        print(f"ROM analysis: {analysis.get('rom_title', '?')} | "
+              f"{len(analysis.get('landmarks', []))} landmarks | "
+              f"{analysis.get('trainer_classes', 0)} trainer classes")
 
         # Let the game run a bit to initialize
         await self.call_tool("run_frames", {"count": 60})
@@ -199,8 +212,8 @@ class PokemonAgent:
                 # Get screenshot for vision if available
                 screenshot = await self.get_screenshot_b64() if self.config.has_vision else None
 
-                # Ask LLM for battle decision
-                decision = self._strategy.choose_battle_action(state, screenshot)
+                # Ask LLM for battle decision (async for realtime analysis)
+                decision = await self._strategy.choose_battle_action(state, screenshot)
                 action = decision.get("action", "move")
                 index = decision.get("index", 0)
 

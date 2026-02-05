@@ -24,6 +24,7 @@ from .cache import (
     make_strategy_cache_key,
 )
 from .game_state import GameState, BattleState, Pokemon
+from .game_analysis import GameAnalyzer
 from . import memory_map as mem
 
 
@@ -77,8 +78,9 @@ Be concise and factual."""
 class StrategyEngine:
     """LLM-powered decision engine with caching and vision."""
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, analyzer: GameAnalyzer | None = None):
         self.config = config
+        self.analyzer = analyzer
         self.cache = DecisionCache(
             config.cache_dir,
             enabled=config.cache_enabled,
@@ -211,7 +213,7 @@ class StrategyEngine:
     # Battle Strategy
     # ============================================================
 
-    def choose_battle_action(
+    async def choose_battle_action(
         self,
         state: GameState,
         screenshot_b64: str | None = None,
@@ -343,6 +345,15 @@ My alive party:
 Badges: {state.badge_count}/8
 
 Memory reference: Enemy data at $CFE4-$D006 (species=$CFE4, HP=$CFE5, moves=$CFEC, stats=$CFF5-$CFFB, catch_rate=$D006). Stat mods at $CD2E-$CD31 (7=neutral)."""
+
+        # Add realtime ROM analysis context (cached per trainer class)
+        if self.analyzer:
+            trainer_class = state.battle.trainer_class if state.battle else 0
+            analysis_ctx = await self.analyzer.get_battle_analysis_context(trainer_class)
+            trainer_name = self.analyzer.get_trainer_name(trainer_class)
+            if not state.battle.is_wild:
+                user_msg += f"\nTrainer: {trainer_name}"
+            user_msg += f"\n\nGame engine context:\n{analysis_ctx}"
 
         # Add vision analysis if available
         if screenshot_b64 and self._vision_client:
