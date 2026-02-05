@@ -40,8 +40,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
     import anthropic
 except ImportError:
-    print("Error: anthropic package not installed.")
-    print("Install with: pip install anthropic")
+    anthropic = None
+
+try:
+    import openai
+except ImportError:
+    openai = None
+
+if not anthropic and not openai:
+    print("Error: Neither anthropic nor openai package installed.")
+    print("Install with: pip install anthropic  OR  pip install openai")
     sys.exit(1)
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -51,6 +59,10 @@ from mcp import ClientSession
 class ClaudeGameBoyAgent:
     """
     AI agent that uses Claude to interact with Game Boy emulator via MCP.
+
+    Supports both:
+    - Anthropic's native API (default)
+    - OpenAI-compatible endpoints (for services like Dartmouth's chat.dartmouth.edu)
     """
 
     SYSTEM_PROMPT = """You are an AI agent controlling a Game Boy emulator through MCP (Model Context Protocol) tools.
@@ -85,7 +97,9 @@ For memory analysis:
 Be helpful and explain what you're doing. If something doesn't work, try alternative approaches."""
 
     def __init__(self, lib_path: str, rom_path: str | None = None,
-                 model: str = "CGB_E", claude_model: str = "claude-sonnet-4-20250514"):
+                 model: str = "CGB_E", claude_model: str = "claude-sonnet-4-20250514",
+                 base_url: str | None = None, api_key: str | None = None,
+                 use_openai_compat: bool = False):
         """
         Initialize the Claude agent.
 
@@ -94,25 +108,45 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
             rom_path: Optional ROM to load on startup
             model: Game Boy model
             claude_model: Claude model to use
+            base_url: Custom API base URL (for Dartmouth, etc.)
+            api_key: API key (or use ANTHROPIC_API_KEY env var)
+            use_openai_compat: Use OpenAI-compatible API (for services like Dartmouth)
         """
         self.lib_path = lib_path
         self.rom_path = rom_path
         self.gb_model = model
         self.claude_model = claude_model
+        self.use_openai_compat = use_openai_compat
 
         # MCP client state
         self._session: ClientSession | None = None
         self._client_ctx = None
         self._session_ctx = None
 
-        # Claude client
-        self.anthropic = anthropic.Anthropic()
+        # Initialize API client
+        if use_openai_compat:
+            if not openai:
+                raise RuntimeError("OpenAI package not installed. Run: pip install openai")
+            self.client = openai.OpenAI(
+                api_key=api_key,
+                base_url=base_url
+            )
+        else:
+            if not anthropic:
+                raise RuntimeError("Anthropic package not installed. Run: pip install anthropic")
+            client_kwargs = {}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            self.client = anthropic.Anthropic(**client_kwargs)
 
         # Conversation history
         self.messages: list[dict] = []
 
         # Available tools (populated on connect)
         self.tools: list[dict] = []
+        self.openai_tools: list[dict] = []  # OpenAI format tools
 
     async def connect(self) -> None:
         """Connect to the MCP server."""
@@ -136,9 +170,10 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
         self._session = await self._session_ctx.__aenter__()
         await self._session.initialize()
 
-        # Get available tools and convert to Anthropic format
+        # Get available tools and convert to API format
         result = await self._session.list_tools()
         self.tools = self._convert_tools_to_anthropic(result.tools)
+        self.openai_tools = self._convert_tools_to_openai(result.tools)
 
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
@@ -172,6 +207,33 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
 
         return anthropic_tools
 
+    def _convert_tools_to_openai(self, mcp_tools) -> list[dict]:
+        """Convert MCP tools to OpenAI tool format."""
+        openai_tools = []
+        for tool in mcp_tools:
+            # Build parameters schema from MCP tool
+            parameters = {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+
+            if tool.inputSchema:
+                schema = tool.inputSchema
+                if isinstance(schema, dict):
+                    parameters = schema
+
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or f"MCP tool: {tool.name}",
+                    "parameters": parameters
+                }
+            })
+
+        return openai_tools
+
     async def call_tool(self, name: str, args: dict) -> Any:
         """Call an MCP tool."""
         if not self._session:
@@ -196,6 +258,13 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
         Returns:
             Claude's response text
         """
+        if self.use_openai_compat:
+            return await self._chat_openai(user_message)
+        else:
+            return await self._chat_anthropic(user_message)
+
+    async def _chat_anthropic(self, user_message: str) -> str:
+        """Chat using Anthropic's native API."""
         # Add user message to history
         self.messages.append({
             "role": "user",
@@ -203,7 +272,7 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
         })
 
         # Call Claude with tools
-        response = self.anthropic.messages.create(
+        response = self.client.messages.create(
             model=self.claude_model,
             max_tokens=4096,
             system=self.SYSTEM_PROMPT,
@@ -242,27 +311,7 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
                     print(f"  [Tool: {block.name}]", flush=True)
                     try:
                         result = await self.call_tool(block.name, block.input)
-
-                        # Handle screenshots specially
-                        if block.name == "capture_screen" and isinstance(result, dict):
-                            if "data_base64" in result:
-                                # Truncate base64 for display but keep for Claude
-                                display_result = {
-                                    "width": result.get("width"),
-                                    "height": result.get("height"),
-                                    "format": result.get("format"),
-                                    "note": "Screenshot captured successfully"
-                                }
-                                print(f"    -> Screenshot: {result.get('width')}x{result.get('height')}")
-                                result_str = json.dumps(result)
-                            else:
-                                result_str = json.dumps(result)
-                        else:
-                            result_str = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
-                            # Show truncated result
-                            display = result_str[:200] + "..." if len(result_str) > 200 else result_str
-                            print(f"    -> {display}")
-
+                        result_str = self._format_tool_result(block.name, result)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
@@ -284,7 +333,7 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
             })
 
             # Continue conversation
-            response = self.anthropic.messages.create(
+            response = self.client.messages.create(
                 model=self.claude_model,
                 max_tokens=4096,
                 system=self.SYSTEM_PROMPT,
@@ -307,6 +356,89 @@ Be helpful and explain what you're doing. If something doesn't work, try alterna
             })
 
         return "\n".join(response_text_parts)
+
+    async def _chat_openai(self, user_message: str) -> str:
+        """Chat using OpenAI-compatible API."""
+        # Build messages with system prompt
+        messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
+        messages.extend(self.messages)
+        messages.append({"role": "user", "content": user_message})
+
+        # Call API with tools
+        response = self.client.chat.completions.create(
+            model=self.claude_model,
+            max_tokens=4096,
+            tools=self.openai_tools,
+            messages=messages
+        )
+
+        response_text_parts = []
+
+        # Process response and handle tool calls
+        while response.choices[0].finish_reason == "tool_calls":
+            message = response.choices[0].message
+
+            # Collect any text content
+            if message.content:
+                response_text_parts.append(message.content)
+
+            # Add assistant message with tool calls
+            messages.append(message.model_dump())
+
+            # Execute tool calls
+            for tool_call in message.tool_calls:
+                func_name = tool_call.function.name
+                func_args = json.loads(tool_call.function.arguments)
+
+                print(f"  [Tool: {func_name}]", flush=True)
+                try:
+                    result = await self.call_tool(func_name, func_args)
+                    result_str = self._format_tool_result(func_name, result)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result_str
+                    })
+                except Exception as e:
+                    print(f"    -> Error: {e}")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps({"error": str(e)})
+                    })
+
+            # Continue conversation
+            response = self.client.chat.completions.create(
+                model=self.claude_model,
+                max_tokens=4096,
+                tools=self.openai_tools,
+                messages=messages
+            )
+
+        # Get final response
+        final_message = response.choices[0].message
+        if final_message.content:
+            response_text_parts.append(final_message.content)
+
+        # Update conversation history (simplified for OpenAI format)
+        self.messages.append({"role": "user", "content": user_message})
+        self.messages.append({"role": "assistant", "content": final_message.content or ""})
+
+        return "\n".join(response_text_parts)
+
+    def _format_tool_result(self, tool_name: str, result: Any) -> str:
+        """Format tool result for display and API."""
+        if tool_name == "capture_screen" and isinstance(result, dict):
+            if "data_base64" in result:
+                print(f"    -> Screenshot: {result.get('width')}x{result.get('height')}")
+                return json.dumps(result)
+            else:
+                return json.dumps(result)
+        else:
+            result_str = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
+            display = result_str[:200] + "..." if len(result_str) > 200 else result_str
+            print(f"    -> {display}")
+            return result_str
 
     def clear_history(self):
         """Clear conversation history."""
@@ -381,6 +513,12 @@ async def main():
     parser.add_argument("--model", "-m", default="CGB_E", help="Game Boy model")
     parser.add_argument("--claude-model", default="claude-sonnet-4-20250514",
                         help="Claude model to use")
+    parser.add_argument("--base-url", default=None,
+                        help="Custom API base URL (e.g., https://chat.dartmouth.edu/api/v1)")
+    parser.add_argument("--api-key", default=None,
+                        help="API key (or use ANTHROPIC_API_KEY env var)")
+    parser.add_argument("--openai-compat", action="store_true",
+                        help="Use OpenAI-compatible API (for services like Dartmouth)")
     parser.add_argument("--display", "-d", action="store_true",
                         help="Enable live display on startup")
     parser.add_argument("-p", "--prompt", help="Single prompt (non-interactive)")
@@ -388,9 +526,10 @@ async def main():
     args = parser.parse_args()
 
     # Check API key
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY environment variable not set")
-        print("Get your API key from https://console.anthropic.com/")
+    api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("Error: API key not provided")
+        print("Use --api-key or set ANTHROPIC_API_KEY environment variable")
         sys.exit(1)
 
     # Find libsameboy.so
@@ -413,7 +552,10 @@ async def main():
         lib_path=lib_path,
         rom_path=args.rom,
         model=args.model,
-        claude_model=args.claude_model
+        claude_model=args.claude_model,
+        base_url=args.base_url,
+        api_key=api_key,
+        use_openai_compat=args.openai_compat
     )
 
     try:
