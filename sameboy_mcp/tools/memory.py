@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: MIT
 """Memory-related MCP tools."""
 
-from mcp.server import Server
+from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
 
 
-def register_memory_tools(server: Server, emu_thread: EmulatorThread) -> None:
+def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register memory-related tools with the MCP server."""
 
     @server.tool()

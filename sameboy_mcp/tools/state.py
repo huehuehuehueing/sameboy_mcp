@@ -6,7 +6,7 @@ import base64
 import time
 import uuid
 
-from mcp.server import Server
+from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
 
@@ -15,7 +15,7 @@ from ..emulator.thread import EmulatorThread, CommandType
 _state_cache: dict[str, dict] = {}
 
 
-def register_state_tools(server: Server, emu_thread: EmulatorThread) -> None:
+def register_state_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register save state tools with the MCP server."""
 
     @server.tool()

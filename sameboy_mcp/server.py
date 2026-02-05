@@ -33,8 +33,7 @@ import logging
 import sys
 from pathlib import Path
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+from mcp.server import FastMCP
 
 from .emulator.core import SameBoyEmulator, EmulatorState
 from .emulator.thread import EmulatorThread, CommandType
@@ -54,7 +53,7 @@ def create_server(
     rom_path: str | None = None,
     boot_rom_path: str | None = None,
     model: str = "CGB_E",
-) -> tuple[Server, SameBoyEmulator, EmulatorThread]:
+) -> tuple[FastMCP, SameBoyEmulator, EmulatorThread]:
     """
     Create and configure the MCP server with emulator.
 
@@ -68,7 +67,7 @@ def create_server(
         Tuple of (server, emulator, thread)
     """
     # Create MCP server
-    server = Server("sameboy-mcp")
+    server = FastMCP("sameboy-mcp")
 
     # Initialize emulator
     logger.info(f"Initializing SameBoy emulator (model: {model})")
@@ -273,12 +272,7 @@ async def run_server(
     try:
         # Run the MCP server
         logger.info("Starting MCP server on stdio")
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options(),
-            )
+        await server.run_stdio_async()
     finally:
         # Cleanup
         logger.info("Shutting down")

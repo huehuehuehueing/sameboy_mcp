@@ -5,12 +5,12 @@
 import base64
 import io
 
-from mcp.server import Server
+from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
 
 
-def register_display_tools(server: Server, emu_thread: EmulatorThread) -> None:
+def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register display-related tools with the MCP server."""
 
     @server.tool()
