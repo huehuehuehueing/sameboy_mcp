@@ -362,3 +362,258 @@ DIR_DOWN = 0x00
 DIR_UP = 0x04
 DIR_LEFT = 0x08
 DIR_RIGHT = 0x0C
+
+
+# ============================================================
+# Additional state detection addresses
+# ============================================================
+
+WRAM_GAME_PROGRESS_FLAGS = 0xD356   # Event flags (1 byte)
+WRAM_OAK_SPEECH_STATUS = 0xD72D     # Oak intro progress flags
+WRAM_OBTAINED_STARTER = 0xD74B      # Bit 7 = obtained starter Pokemon
+WRAM_MAIN_MENU_STATE = 0xD731       # Main menu selection state
+WRAM_NAMING_SCREEN_TYPE = 0xCF91    # Name entry screen type (0=unused)
+WRAM_CURSOR_TILE_POS = 0xC4B0       # Cursor position in name entry
+WRAM_NUM_LETTERS_ENTERED = 0xCF4A   # Number of chars entered in name
+WRAM_TEXTBOX_FLAG = 0xCFC4          # Whether text box is active
+WRAM_JOY_IGNORE = 0xCD6B            # Bitmask of buttons to ignore
+WRAM_PREDEF_ID = 0xD0B6             # Current predef function running
+WRAM_WARP_DESTINATION = 0xD42F      # Destination map for warp
+WRAM_DESTINATION_MAP = 0xFF8B       # Destination map ID (HRAM)
+
+# Intro/title screen specific
+WRAM_INTRO_SCENE = 0xD08A           # Intro scene index
+WRAM_GAME_STATE = 0xD0C0            # Broad game state (varies by context)
+WRAM_AUDIO_FLAG = 0xCFCA            # Audio state (can indicate title)
+WRAM_SPRITE_FLAGS = 0xC100          # Sprite data start (can detect gameplay)
+
+# Map and collision data
+WRAM_MAP_DATA = 0xC6E8              # Current map block data (overworld)
+WRAM_MAP_BLOCK_PTR = 0xD35F         # Pointer to current map blocks
+WRAM_COLLISION_DATA = 0xC7C8        # Collision data for current map
+WRAM_SPRITE_DATA = 0xC100           # Sprite movement data (16 bytes each)
+WRAM_NUM_SPRITES_ACTUAL = 0xD4E0    # Actual sprite count on map
+WRAM_WARP_DATA = 0xD3AA             # Warp destination data
+
+# Warp/connection data
+WRAM_NUM_WARPS = 0xD3AE             # Number of warp points on current map
+WRAM_WARP_ENTRIES = 0xD3AF          # Warp entry data (4 bytes each: y, x, warp_id, dest_map)
+WRAM_DEST_MAP = 0xD42F              # Destination map after warp
+WRAM_WARP_DEST_ENTRY = 0xD430       # Which warp entry to use at destination
+
+# Sprite structure (16 bytes each, starting at 0xC100)
+# Sprite 0 is the player
+SPRITE_PICTURE_ID = 0x00            # Sprite image ID
+SPRITE_MOVE_STATUS = 0x01           # Movement status
+SPRITE_IMAGE_INDEX = 0x02           # Current image/frame
+SPRITE_Y_STEP = 0x03                # Y step counter
+SPRITE_Y_POS = 0x04                 # Y position (pixels, offset from top-left)
+SPRITE_X_STEP = 0x05                # X step counter
+SPRITE_X_POS = 0x06                 # X position (pixels, offset from top-left)
+SPRITE_INTRA_ANIM = 0x07            # Intra-animation counter
+SPRITE_ANIM_DELAY = 0x08            # Animation frame delay
+SPRITE_FACING = 0x09                # Facing direction
+SPRITE_TILE_Y = 0x0A                # Y tile position (unused?)
+SPRITE_TILE_X = 0x0B                # X tile position (unused?)
+SPRITE_MAP_Y = 0x0C                 # Map Y coordinate
+SPRITE_MAP_X = 0x0D                 # Map X coordinate
+SPRITE_WALK_ANIM = 0x0E             # Walk animation counter
+SPRITE_FLAGS = 0x0F                 # Sprite flags
+
+# Dialog/Text state verification
+WRAM_TEXT_DELAY_FRAMES = 0xCF42     # Frames until next text char
+WRAM_JOYPAD_SIM_ACTIVE = 0xCD3D     # DEPRECATED - use WRAM_SIM_JOYPAD_STATES_INDEX
+WRAM_TEXTBOX_OPEN = 0xC6F0          # Nonzero when text box is visible on screen
+WRAM_DIALOG_STATE = 0xCF93          # Dialog state machine
+WRAM_SCRIPT_RUNNING = 0xD730        # Bit 0: script is running
+
+# ============================================================
+# Critical Game State Detection (from pret/pokeyellow disassembly)
+# ============================================================
+
+# Joypad simulation - THIS is the key variable for detecting scripted movement
+# When non-zero, the game is simulating button presses (cutscenes, intros, NPC scripts)
+# When 0, normal player input is accepted
+WRAM_SIM_JOYPAD_STATES_INDEX = 0xCC3F  # wSimulatedJoypadStatesIndex
+
+# Yellow-specific intro tracking
+# Tracks which scene of the intro is playing (0-17)
+# Bit 7 set = intro has finished
+WRAM_YELLOW_INTRO_SCENE = 0xC634       # wYellowIntroCurrentScene
+WRAM_YELLOW_INTRO_TIMER = 0xC635       # wYellowIntroSceneTimer
+
+# Text box detection
+WRAM_TEXT_BOX_ID = 0xCF94              # wTextBoxID - non-zero when text box active
+
+# Walk state (more reliable than WRAM_WALK_COUNTER)
+WRAM_PLAYER_MOVING_DIRECTION = 0xD528  # wPlayerMovingDirection - direction player is trying to move
+
+# Movement script states
+WRAM_SIMULATED_JOYPAD_END = 0xCD40     # wSimulatedJoypadStatesEnd - buffer end for simulated inputs
+WRAM_OVERRIDE_SIM_JOYPAD_MASK = 0xCC43 # wOverrideSimulatedJoypadStatesMask
+
+
+# ============================================================
+# Pokemon Yellow Character Encoding (Gen 1)
+# ============================================================
+
+# The Game Boy uses a custom character encoding, not ASCII.
+# This table decodes tile IDs to characters for text reading.
+
+CHAR_ENCODING = {
+    0x00: " ",
+    # Uppercase letters
+    0x80: "A", 0x81: "B", 0x82: "C", 0x83: "D", 0x84: "E",
+    0x85: "F", 0x86: "G", 0x87: "H", 0x88: "I", 0x89: "J",
+    0x8A: "K", 0x8B: "L", 0x8C: "M", 0x8D: "N", 0x8E: "O",
+    0x8F: "P", 0x90: "Q", 0x91: "R", 0x92: "S", 0x93: "T",
+    0x94: "U", 0x95: "V", 0x96: "W", 0x97: "X", 0x98: "Y",
+    0x99: "Z",
+    # Special Pokemon symbols
+    0x9A: "(", 0x9B: ")", 0x9C: ":", 0x9D: ";", 0x9E: "[", 0x9F: "]",
+    # Lowercase letters
+    0xA0: "a", 0xA1: "b", 0xA2: "c", 0xA3: "d", 0xA4: "e",
+    0xA5: "f", 0xA6: "g", 0xA7: "h", 0xA8: "i", 0xA9: "j",
+    0xAA: "k", 0xAB: "l", 0xAC: "m", 0xAD: "n", 0xAE: "o",
+    0xAF: "p", 0xB0: "q", 0xB1: "r", 0xB2: "s", 0xB3: "t",
+    0xB4: "u", 0xB5: "v", 0xB6: "w", 0xB7: "x", 0xB8: "y",
+    0xB9: "z",
+    # Accented characters (é commonly used in "Pokémon")
+    0xBA: "é",
+    # Numbers
+    0xF6: "0", 0xF7: "1", 0xF8: "2", 0xF9: "3", 0xFA: "4",
+    0xFB: "5", 0xFC: "6", 0xFD: "7", 0xFE: "8", 0xFF: "9",
+    # Punctuation and symbols
+    0xE0: "'",  # Apostrophe (used in "It's", etc.)
+    0xE1: "PK", # PK symbol
+    0xE2: "MN", # MN symbol (for "POKéMON")
+    0xE3: "-",  # Dash
+    0xE4: "?",  # Question mark
+    0xE5: "!",  # Exclamation mark
+    0xE6: ".",  # Period
+    0xE7: "/",  # Slash
+    0xE8: ",",  # Comma
+    0xEF: "♂",  # Male symbol
+    0xF5: "♀",  # Female symbol
+    0x50: "@",  # String terminator (end of text)
+    0x4F: "\n", # Line break
+    0x51: "*",  # End of page / paragraph marker
+    0x55: "<CONT>",  # Continuation marker
+    0x57: "<DONE>",  # Text done marker
+    0x58: "<PROMPT>", # Waiting for input
+    0x7F: " ",  # Space variant
+    # More space/blank variants
+    0x10: " ", 0x11: " ", 0x12: " ", 0x13: " ",
+}
+
+# Reverse encoding for writing text
+CHAR_TO_TILE = {v: k for k, v in CHAR_ENCODING.items() if len(v) == 1}
+# Ensure uppercase A maps correctly
+CHAR_TO_TILE.update({
+    "A": 0x80, "B": 0x81, "C": 0x82, "D": 0x83, "E": 0x84,
+    "F": 0x85, "G": 0x86, "H": 0x87, "I": 0x88, "J": 0x89,
+    "K": 0x8A, "L": 0x8B, "M": 0x8C, "N": 0x8D, "O": 0x8E,
+    "P": 0x8F, "Q": 0x90, "R": 0x91, "S": 0x92, "T": 0x93,
+    "U": 0x94, "V": 0x95, "W": 0x96, "X": 0x97, "Y": 0x98,
+    "Z": 0x99, " ": 0x7F, "@": 0x50,
+})
+
+
+def decode_text(tile_bytes: list[int], max_len: int = 100) -> str:
+    """Decode a sequence of tile bytes to text using Pokemon encoding."""
+    result = []
+    for i, b in enumerate(tile_bytes):
+        if i >= max_len:
+            break
+        if b == 0x50:  # String terminator
+            break
+        char = CHAR_ENCODING.get(b, "")
+        if char and not char.startswith("<"):
+            result.append(char)
+        elif char.startswith("<"):
+            break  # Control character, stop
+    return "".join(result)
+
+
+def encode_text(text: str, terminator: bool = True) -> list[int]:
+    """Encode a string to Pokemon tile bytes."""
+    result = []
+    for c in text.upper():
+        if c in CHAR_TO_TILE:
+            result.append(CHAR_TO_TILE[c])
+        else:
+            result.append(0x7F)  # Space for unknown
+    if terminator:
+        result.append(0x50)  # String terminator
+    return result
+
+
+# ============================================================
+# Collision tile types (from pret/pokeyellow)
+# ============================================================
+
+# Tile IDs that are walkable (collision = 0)
+WALKABLE_TILES = {
+    0x00,  # Grass
+    0x01,  # Grass variant
+    0x04,  # Path/floor
+    0x05,  # Path variant
+    0x0A,  # Indoor floor
+    0x0B,  # Indoor floor variant
+    0x14,  # Carpet/rug
+    0x48,  # Sand
+    0x49,  # Sand variant
+}
+
+# Tiles that trigger encounters
+ENCOUNTER_TILES = {
+    0x0F,  # Tall grass
+    0x14,  # Cave floor (encounters)
+    0x15,  # Cave floor variant
+}
+
+# Tiles that are warp points (doors, stairs, etc.)
+# These are collision tile IDs, not visual tile IDs
+WARP_TILES = {
+    0x1A,  # Door
+    0x1B,  # Door variant
+    0x3C,  # Warp/door (common indoor)
+    0x3D,  # Warp/door variant
+    0x52,  # Stairs
+    0x53,  # Stairs variant
+    0x5C,  # Ladder
+    0x5D,  # Ladder variant
+    0x71,  # Warp tile
+    0x79,  # Warp tile variant
+    # Common indoor warp tiles in Pokemon Yellow
+    0x00,  # Some floors act as warp zones near edges
+}
+
+# Solid/impassable tiles
+SOLID_TILES = {
+    0x03,  # Tree
+    0x07,  # Building wall
+    0x08,  # Building wall variant
+    0x12,  # Water
+    0x13,  # Water variant
+    0x21,  # Rock/boulder
+    0x24,  # Fence
+}
+
+
+# ============================================================
+# Name entry screen constants
+# ============================================================
+
+NAME_ENTRY_PLAYER = 0x00   # Naming the player
+NAME_ENTRY_RIVAL = 0x01    # Naming the rival
+NAME_ENTRY_POKEMON = 0x02  # Nicknaming a Pokemon
+
+# Maximum name lengths
+MAX_PLAYER_NAME = 7
+MAX_RIVAL_NAME = 7
+MAX_POKEMON_NICK = 10
+
+# Default names in Pokemon Yellow
+DEFAULT_PLAYER_NAMES = ["YELLOW", "ASH", "JACK"]
+DEFAULT_RIVAL_NAMES = ["BLUE", "GARY", "JOHN"]

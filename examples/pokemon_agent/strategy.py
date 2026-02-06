@@ -22,6 +22,7 @@ from .cache import (
     make_battle_cache_key,
     make_navigation_cache_key,
     make_strategy_cache_key,
+    make_pathfinding_cache_key,
 )
 from .game_state import GameState, BattleState, Pokemon
 from .game_analysis import GameAnalyzer
@@ -73,6 +74,32 @@ Describe what you see:
 4. If battle: which Pokemon are fighting, any HP bars visible
 5. If menu: what options are shown, which is selected
 Be concise and factual."""
+
+PATHFINDING_SYSTEM_PROMPT = """You are a navigation assistant for a Pokemon Yellow AI agent.
+
+Analyze the screenshot to identify:
+1. Obstacles not visible in memory (furniture, decorations)
+2. NPCs or objects that might be interactable
+3. The best exit/target to use if multiple options exist
+
+Output ONLY a JSON object:
+{
+  "target": "stairs" or "door" or "npc",
+  "obstacles": ["description of visible obstacles"],
+  "recommendation": "Brief advice for navigation",
+  "confidence": "high" or "medium" or "low"
+}
+
+The actual pathfinding is done by coded BFS - you just provide visual analysis."""
+
+PATHFINDING_VISION_PROMPT = """Analyze this Pokemon Yellow screenshot for navigation.
+
+Identify visible obstacles and exits. Output JSON only:
+{
+  "exits_visible": ["stairs to upper-right", "door at bottom"],
+  "obstacles": ["table blocking path", "NPC near door"],
+  "recommended_direction": "right"
+}"""
 
 
 class StrategyEngine:
@@ -136,32 +163,129 @@ class StrategyEngine:
                 temperature=0.3,
             )
             text = response.choices[0].message.content or ""
-            self._log(f"LLM response: {text[:200]}")
+            self._log(f"LLM response ({len(text)} chars): {text[:500]}")
             return text
         except Exception as e:
             self._log(f"LLM error: {e}")
             return '{"action": "wait", "frames": 60}'
 
     def _parse_json_response(self, text: str) -> dict:
-        """Extract JSON from LLM response (handles markdown code blocks)."""
+        """Extract JSON from LLM response (handles markdown, thinking prefixes)."""
+        import re
+        original_text = text
         text = text.strip()
+
         # Strip markdown code fences
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = [l for l in lines if not l.startswith("```")]
-            text = "\n".join(lines).strip()
+        if "```" in text:
+            code_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+            if code_match:
+                text = code_match.group(1).strip()
+            else:
+                lines = text.split("\n")
+                lines = [l for l in lines if not l.startswith("```")]
+                text = "\n".join(lines).strip()
+
+        # Try direct parse first
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Try to find JSON in the response
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start >= 0 and end > start:
-                try:
-                    return json.loads(text[start:end])
-                except json.JSONDecodeError:
-                    pass
+            pass
+
+        # Find all potential JSON objects in the text
+        json_candidates = []
+        brace_starts = [m.start() for m in re.finditer(r'\{', text)]
+
+        for start in brace_starts:
+            depth = 0
+            for i, c in enumerate(text[start:]):
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start:start + i + 1]
+                        try:
+                            parsed = json.loads(candidate)
+                            if "steps" in parsed:
+                                return parsed
+                            json_candidates.append(parsed)
+                        except json.JSONDecodeError:
+                            pass
+                        break
+
+        if json_candidates:
+            return json_candidates[0]
+
+        # Fallback: try to extract path from reasoning text (for thinking models)
+        extracted = self._extract_path_from_reasoning(original_text)
+        if extracted:
+            return extracted
+
         return {"action": "wait", "frames": 60}
+
+    def _extract_path_from_reasoning(self, text: str) -> dict | None:
+        """Extract path information from chain-of-thought reasoning."""
+        import re
+
+        # Look for explicit step sequences like ['R', 'R', 'D'] or ["right", "right", "down"]
+        step_array_match = re.search(r"\[(['\"][UDLR]?(?:up|down|left|right)?['\"](?:,\s*['\"][UDLR]?(?:up|down|left|right)?['\"])*)\]", text, re.IGNORECASE)
+        if step_array_match:
+            try:
+                steps_str = "[" + step_array_match.group(1) + "]"
+                steps = eval(steps_str)  # Safe since we matched a specific pattern
+                # Convert short forms to full names
+                direction_map = {'R': 'right', 'L': 'left', 'U': 'up', 'D': 'down',
+                                'r': 'right', 'l': 'left', 'u': 'up', 'd': 'down'}
+                steps = [direction_map.get(s, s.lower()) for s in steps]
+                if steps:
+                    return {
+                        "steps": steps,
+                        "obstacles": [],
+                        "confidence": "medium",
+                        "reasoning": "Extracted from model reasoning"
+                    }
+            except:
+                pass
+
+        # Look for patterns like "right 6 times" and "down 1 time"
+        right_match = re.search(r'(?:right|R)\s*(?:by\s*)?(\d+)(?:\s*(?:times?|units?|steps?))?', text, re.IGNORECASE)
+        left_match = re.search(r'(?:left|L)\s*(?:by\s*)?(\d+)(?:\s*(?:times?|units?|steps?))?', text, re.IGNORECASE)
+        up_match = re.search(r'(?:up|U)\s*(?:by\s*)?(\d+)(?:\s*(?:times?|units?|steps?))?', text, re.IGNORECASE)
+        down_match = re.search(r'(?:down|D)\s*(?:by\s*)?(\d+)(?:\s*(?:times?|units?|steps?))?', text, re.IGNORECASE)
+
+        # Also match "6 right" pattern
+        if not right_match:
+            right_match = re.search(r'(\d+)\s*(?:times?\s+)?(?:right|R)', text, re.IGNORECASE)
+        if not left_match:
+            left_match = re.search(r'(\d+)\s*(?:times?\s+)?(?:left|L)', text, re.IGNORECASE)
+        if not up_match:
+            up_match = re.search(r'(\d+)\s*(?:times?\s+)?(?:up|U)', text, re.IGNORECASE)
+        if not down_match:
+            down_match = re.search(r'(\d+)\s*(?:times?\s+)?(?:down|D)', text, re.IGNORECASE)
+
+        steps = []
+        if right_match:
+            count = int(right_match.group(1))
+            steps.extend(["right"] * min(count, 20))
+        if left_match:
+            count = int(left_match.group(1))
+            steps.extend(["left"] * min(count, 20))
+        if up_match:
+            count = int(up_match.group(1))
+            steps.extend(["up"] * min(count, 20))
+        if down_match:
+            count = int(down_match.group(1))
+            steps.extend(["down"] * min(count, 20))
+
+        if steps:
+            return {
+                "steps": steps,
+                "obstacles": [],
+                "confidence": "low",
+                "reasoning": "Extracted movement counts from reasoning"
+            }
+
+        return None
 
     # ============================================================
     # Vision LLM calls
@@ -376,6 +500,85 @@ Memory reference: Enemy data at $CFE4-$D006 (species=$CFE4, HP=$CFE5, moves=$CFE
         )
 
         return decision
+
+    # ============================================================
+    # LLM-Assisted Pathfinding
+    # ============================================================
+
+    async def analyze_for_navigation(
+        self,
+        state: GameState,
+        screenshot_b64: str | None = None,
+    ) -> dict:
+        """
+        Analyze screenshot for navigation obstacles using vision model.
+
+        This does NOT calculate paths - it identifies visual obstacles
+        that might not be in memory (furniture, decorations, NPCs).
+        Actual pathfinding is done by coded BFS.
+
+        Args:
+            state: Current game state
+            screenshot_b64: Screenshot for vision analysis (required)
+
+        Returns:
+            dict with:
+            - obstacles: list of identified obstacle descriptions
+            - target: recommended target type ("stairs", "door", etc.)
+            - recommendation: brief navigation advice
+            - confidence: "high", "medium", or "low"
+        """
+        # Vision analysis requires a screenshot
+        if not screenshot_b64 or not self._vision_client:
+            return {
+                "obstacles": [],
+                "target": "exit",
+                "recommendation": "Use coded pathfinding",
+                "confidence": "low"
+            }
+
+        # Check cache
+        cache_key = make_pathfinding_cache_key(
+            map_id=state.map_id,
+            player_x=state.player_x,
+            player_y=state.player_y,
+            target_type="vision_analysis",
+        )
+
+        cached = self.cache.get(cache_key)
+        if cached:
+            self._log(f"cache hit for vision analysis: {cached[:100]}")
+            return self._parse_json_response(cached)
+
+        # Use vision model to analyze screenshot for obstacles
+        vision_result = self.analyze_screenshot(
+            screenshot_b64,
+            PATHFINDING_VISION_PROMPT,
+        )
+
+        # Parse vision result as JSON if possible
+        result = self._parse_json_response(vision_result)
+
+        # Ensure required fields
+        if "obstacles" not in result:
+            result["obstacles"] = []
+        if "target" not in result:
+            result["target"] = "exit"
+        if "recommendation" not in result:
+            result["recommendation"] = vision_result[:200] if isinstance(vision_result, str) else ""
+        if "confidence" not in result:
+            result["confidence"] = "medium"
+
+        # Cache the analysis
+        self.cache.put(
+            cache_key,
+            json.dumps(result),
+            context=f"vision analysis map:{state.map_id}",
+            max_hits=5,
+        )
+
+        self._log(f"vision analysis: {len(result.get('obstacles', []))} obstacles, target={result.get('target')}")
+        return result
 
     # ============================================================
     # Overworld Strategy

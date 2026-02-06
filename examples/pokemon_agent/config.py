@@ -71,6 +71,10 @@ class AgentConfig:
     max_steps: int = 0             # 0 = unlimited
     cycle_frames: int = 30         # Frames to run between decisions (~0.5 sec)
 
+    # Saved state
+    state_path: str | None = None       # Load state from this file on startup
+    save_state_path: str | None = None  # Save state to this file on exit
+
     # Caching
     cache_dir: str = ".pokemon_agent_cache"
     cache_enabled: bool = True

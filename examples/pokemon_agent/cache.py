@@ -189,3 +189,17 @@ def make_strategy_cache_key(
     lvl_bucket = bucket_level(party_avg_level)
     raw = f"strategy|map:{map_id}|badges:{badge_count}|party:{species_str}|avg_lv:{lvl_bucket}"
     return hashlib.md5(raw.encode()).hexdigest()
+
+
+def make_pathfinding_cache_key(
+    map_id: int,
+    player_x: int,
+    player_y: int,
+    target_type: str,  # "exit", "npc", "item", etc.
+) -> str:
+    """Generate cache key for a pathfinding decision."""
+    # Bucket position into quadrants to improve cache hits
+    quad_x = player_x // 4
+    quad_y = player_y // 4
+    raw = f"pathfind|map:{map_id}|pos:{quad_x},{quad_y}|target:{target_type}"
+    return hashlib.md5(raw.encode()).hexdigest()

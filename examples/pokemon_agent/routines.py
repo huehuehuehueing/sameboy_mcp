@@ -8,22 +8,25 @@ import asyncio
 from typing import Any
 
 from . import memory_map as mem
-from .game_state import GameState, GameMode, Direction, GameStateReader
+from .game_state import GameState, GameMode, Direction, GameStateReader, ScreenText
 
 
 class Routines:
     """Coded routines for game interaction."""
 
-    def __init__(self, call_tool, state_reader: GameStateReader, verbose: bool = False):
+    def __init__(self, call_tool, state_reader: GameStateReader, verbose: bool = False, strategy=None):
         """
         Args:
             call_tool: async callable(name, args) → result for MCP tools
             state_reader: GameStateReader instance
             verbose: Print debug info
+            strategy: Optional StrategyEngine for LLM-assisted navigation
         """
         self._call = call_tool
         self._reader = state_reader
         self._verbose = verbose
+        self._strategy = strategy
+        self._blocked_tiles: set[tuple[int, int, int]] = set()  # (map_id, x, y)
 
     def _log(self, msg: str):
         if self._verbose:
@@ -56,22 +59,187 @@ class Routines:
         return await self._call("capture_screen", {"format": "png"})
 
     # ============================================================
-    # Title Screen
+    # Title Screen and Intro
     # ============================================================
 
     async def handle_title_screen(self) -> bool:
         """Navigate past title screen. Returns True if successful."""
-        self._log("handling title screen")
+        self._log("handling title screen - pressing Start")
         # Press Start on title screen
         await self.press("start", 8)
         await self.wait_frames(60)
 
-        # Press A to confirm / continue
+        state = await self.read_state()
+        return state.mode != GameMode.TITLE_SCREEN
+
+    async def handle_intro(self) -> bool:
+        """Skip through intro/copyright screens by pressing buttons."""
+        self._log("handling intro - pressing A to skip")
+        # Press A repeatedly to skip intro animations
+        for _ in range(5):
+            await self.press("a", 6)
+            await self.wait_frames(30)
+
+            state = await self.read_state()
+            if state.mode not in (GameMode.INTRO, GameMode.TITLE_SCREEN):
+                return True
+
+        return False
+
+    async def handle_main_menu(self, select_new_game: bool = True) -> bool:
+        """
+        Navigate the main menu (Continue/New Game/Options).
+
+        Args:
+            select_new_game: If True, select New Game. If False, select Continue.
+        """
+        self._log(f"handling main menu - select_new_game={select_new_game}")
+        state = await self.read_state()
+
+        # Check if we can detect menu options from screen text
+        if state.screen_text and state.screen_text.has_text:
+            text = state.screen_text.full_text.upper()
+            has_continue = "CONTINUE" in text
+
+            if select_new_game:
+                # New Game is below Continue if Continue exists
+                if has_continue:
+                    await self.press("down", 4)
+                    await self.wait_frames(8)
+            else:
+                # Continue should be first option if it exists
+                if not has_continue:
+                    self._log("no save game found - selecting New Game")
+                    select_new_game = True
+
+        # Select the option
         await self.press("a", 8)
         await self.wait_frames(60)
 
         state = await self.read_state()
-        return state.mode != GameMode.TITLE_SCREEN
+        return state.mode == GameMode.MAIN_MENU
+
+    async def enter_name(self, name: str = "ASH") -> bool:
+        """
+        Enter a name in the name entry screen.
+
+        Args:
+            name: The name to enter (max 7 chars for player/rival)
+
+        Returns True when name entry is complete.
+        """
+        name = name.upper()[:7]  # Max 7 characters
+        self._log(f"entering name: {name}")
+
+        # The name entry screen has a keyboard grid layout:
+        # A B C D E F G H I
+        # J K L M N O P Q R
+        # S T U V W X Y Z
+        # (lowercase on second page)
+        # Special keys at bottom row
+
+        # Simplified approach: Use the "select name from list" if available
+        # Otherwise type each letter
+
+        state = await self.read_state()
+
+        # Check if we're on a name selection screen with preset names
+        if state.screen_text and state.screen_text.has_text:
+            text = state.screen_text.full_text.upper()
+
+            # Check for default name options
+            for i, default_name in enumerate(mem.DEFAULT_PLAYER_NAMES):
+                if default_name in text:
+                    # Navigate to and select the default name
+                    for _ in range(i):
+                        await self.press("down", 4)
+                        await self.wait_frames(4)
+                    await self.press("a", 8)
+                    await self.wait_frames(30)
+                    return True
+
+        # Manual character entry
+        # Character grid positions (row, col) for each letter
+        char_positions = {
+            'A': (0, 0), 'B': (0, 1), 'C': (0, 2), 'D': (0, 3), 'E': (0, 4),
+            'F': (0, 5), 'G': (0, 6), 'H': (0, 7), 'I': (0, 8),
+            'J': (1, 0), 'K': (1, 1), 'L': (1, 2), 'M': (1, 3), 'N': (1, 4),
+            'O': (1, 5), 'P': (1, 6), 'Q': (1, 7), 'R': (1, 8),
+            'S': (2, 0), 'T': (2, 1), 'U': (2, 2), 'V': (2, 3), 'W': (2, 4),
+            'X': (2, 5), 'Y': (2, 6), 'Z': (2, 7),
+            ' ': (4, 0),  # Space is on bottom row
+        }
+
+        current_row, current_col = 0, 0
+
+        for char in name:
+            if char not in char_positions:
+                char = ' '  # Default to space for unknown chars
+
+            target_row, target_col = char_positions[char]
+
+            # Navigate to the character
+            while current_row < target_row:
+                await self.press("down", 4)
+                await self.wait_frames(2)
+                current_row += 1
+
+            while current_row > target_row:
+                await self.press("up", 4)
+                await self.wait_frames(2)
+                current_row -= 1
+
+            while current_col < target_col:
+                await self.press("right", 4)
+                await self.wait_frames(2)
+                current_col += 1
+
+            while current_col > target_col:
+                await self.press("left", 4)
+                await self.wait_frames(2)
+                current_col -= 1
+
+            # Select the character
+            await self.press("a", 6)
+            await self.wait_frames(8)
+
+        # Confirm the name (press Start or navigate to END)
+        await self.press("start", 8)
+        await self.wait_frames(30)
+
+        # Check if we need to confirm
+        await self.press("a", 6)
+        await self.wait_frames(60)
+
+        state = await self.read_state()
+        return state.mode != GameMode.NAME_ENTRY
+
+    async def skip_oak_intro(self) -> bool:
+        """
+        Skip through Oak's intro speech by pressing A repeatedly.
+        Handles the "world of Pokemon" introduction.
+        """
+        self._log("skipping Oak intro sequence")
+
+        for _ in range(100):  # Safety limit
+            state = await self.read_state()
+
+            # Check if we've moved past the intro
+            if state.mode == GameMode.NAME_ENTRY:
+                self._log("reached name entry")
+                return True
+            if state.mode == GameMode.OVERWORLD:
+                self._log("reached overworld")
+                return True
+            if state.party_count > 0:
+                self._log("player has Pokemon - intro complete")
+                return True
+
+            # Press A to advance dialog
+            await self.press("a", 6)
+            await self.wait_frames(15)
+
+        return False
 
     # ============================================================
     # Text / Dialog
@@ -144,33 +312,503 @@ class Routines:
         """
         Walk in a direction for N steps.
         direction: "up", "down", "left", "right"
-        Returns True if movement completed.
+        Returns True if movement completed (position changed).
         """
         self._log(f"walking {direction} x{steps}")
-        for _ in range(steps):
+
+        for step in range(steps):
             before = await self.read_state()
 
-            # Press direction and wait for walk animation
-            await self.press(direction, 8)
-            await self.wait_frames(12)
+            # If in dialog mode, we can't walk - need to exit first
+            if before.mode == GameMode.DIALOG:
+                self._log(f"in dialog mode, pressing B first")
+                await self.press("b", 6)
+                await self.wait_frames(8)
+                before = await self.read_state()
+                if before.mode == GameMode.DIALOG:
+                    self._log(f"still in dialog, cannot walk")
+                    return False
 
-            # Verify position changed
+            # Press direction and wait for walk animation
+            # A walk cycle in Pokemon is 16 frames, we need sufficient time
+            await self.press(direction, 16)  # Hold for full walk cycle
+            await self.wait_frames(24)  # Wait longer after releasing
+
+            # Verify movement occurred
             after = await self.read_state()
-            if before.player_x == after.player_x and before.player_y == after.player_y:
-                self._log(f"blocked! couldn't move {direction}")
-                return False
+
+            # Check if we changed maps (warp) FIRST - position might not change during warp
+            if after.map_id != before.map_id:
+                self._log(f"warped from map {before.map_id} to {after.map_id}!")
+                return True
 
             # Check if we entered a battle
             if after.mode == GameMode.BATTLE:
                 self._log("encountered battle while walking!")
                 return False
 
+            # Check if position changed
+            if before.player_x == after.player_x and before.player_y == after.player_y:
+                self._log(f"blocked at ({before.player_x},{before.player_y})! couldn't move {direction}")
+                return False
+
+            self._log(f"moved from ({before.player_x},{before.player_y}) to ({after.player_x},{after.player_y})")
+
         return True
+
+    async def trigger_warp(self, direction: str = "down") -> bool:
+        """
+        Trigger a warp/stairs by holding a direction longer.
+        Stairs in Pokemon require holding the direction button during the animation.
+        Returns True if map changed.
+        """
+        self._log(f"triggering warp by holding {direction}")
+        before = await self.read_state()
+
+        # Hold the direction for longer (stairs need extended input)
+        await self.press(direction, 32)  # Double the normal walk time
+        await self.wait_frames(60)  # Wait for warp animation
+
+        after = await self.read_state()
+
+        # Check for map change
+        if after.map_id != before.map_id:
+            self._log(f"warp triggered! {before.map_id} -> {after.map_id}")
+            return True
+
+        # If still same map, try again with even more pressure
+        await self.press(direction, 48)
+        await self.wait_frames(90)
+
+        after = await self.read_state()
+        if after.map_id != before.map_id:
+            self._log(f"warp triggered (2nd attempt)! {before.map_id} -> {after.map_id}")
+            return True
+
+        self._log("warp did not trigger")
+        return False
 
     async def face_direction(self, direction: str):
         """Turn to face a direction without walking (tap briefly)."""
         await self.press(direction, 2)
         await self.wait_frames(4)
+
+    async def get_walkable_directions(self) -> list[str]:
+        """
+        Check which directions are walkable from current position.
+        Returns list of walkable directions in priority order (down first for exits).
+
+        Uses quick tile checks by briefly facing each direction.
+        """
+        walkable = []
+        state = await self.read_state()
+
+        facing_map = {
+            Direction.UP: "up",
+            Direction.DOWN: "down",
+            Direction.LEFT: "left",
+            Direction.RIGHT: "right",
+        }
+        current_facing = facing_map.get(state.facing, "down")
+
+        # Check each direction - prioritize down (exits usually at bottom)
+        for direction in ["down", "left", "right", "up"]:
+            # Face the direction to read the tile ahead
+            if direction != current_facing:
+                await self.press(direction, 2)
+                await self.wait_frames(3)
+
+            new_state = await self.read_state()
+            tile = new_state.tile_ahead
+
+            # Check if walkable (not solid, not 0xFF)
+            # Also allow warp tiles since those are valid destinations
+            if tile not in mem.SOLID_TILES and tile != 0xFF:
+                walkable.append(direction)
+            elif tile in mem.WARP_TILES:
+                walkable.insert(0, direction)  # Prioritize warps
+
+            current_facing = direction
+
+        self._log(f"walkable directions: {walkable}")
+        return walkable
+
+    async def explore_area(self, max_steps: int = 10) -> bool:
+        """
+        Explore the current area by walking in available directions.
+        Returns True if exploration was successful.
+        """
+        self._log(f"exploring area (max {max_steps} steps)")
+
+        for step in range(max_steps):
+            walkable = await self.get_walkable_directions()
+
+            if not walkable:
+                self._log("no walkable directions!")
+                return False
+
+            # Prefer unexplored directions (simple heuristic: rotate through)
+            direction = walkable[step % len(walkable)]
+
+            success = await self.walk(direction, 1)
+            if not success:
+                # Try another direction
+                for alt_dir in walkable:
+                    if alt_dir != direction:
+                        success = await self.walk(alt_dir, 1)
+                        if success:
+                            break
+
+            state = await self.read_state()
+
+            # Check if we found something interesting
+            if state.mode == GameMode.BATTLE:
+                self._log("encountered battle while exploring!")
+                return True
+            if state.mode == GameMode.DIALOG:
+                self._log("found dialog/NPC!")
+                return True
+
+        return True
+
+    async def find_path_to_warp(self) -> list[str]:
+        """
+        Find a path to the nearest warp using proper 2D pathfinding.
+
+        Returns:
+            List of directions ["down", "left", etc.] to reach the warp,
+            or empty list if no path found.
+        """
+        from .pathfinding import MapReader, find_path_to_nearest, Point
+
+        map_reader = MapReader(self._call)
+
+        # Get current position and warp locations
+        player_pos = await map_reader.get_player_position()
+        warp_positions = await map_reader.get_warp_positions()
+
+        if not warp_positions:
+            self._log("no warps found on this map")
+            return []
+
+        # Log warp locations
+        for warp in warp_positions:
+            dist = abs(warp.x - player_pos.x) + abs(warp.y - player_pos.y)
+            self._log(f"warp at ({warp.x},{warp.y}), dist={dist}")
+
+        # Build collision map
+        collision_map = await map_reader.read_collision_map()
+        self._log(f"collision map: {collision_map.width}x{collision_map.height}")
+
+        # Find path to nearest warp
+        path = find_path_to_nearest(collision_map, player_pos, warp_positions)
+
+        if path:
+            self._log(f"path found: {len(path.steps)} steps - {path.steps[:5]}...")
+            return path.steps
+        else:
+            self._log("no path to any warp found")
+            return []
+
+    async def find_exit(self) -> str | None:
+        """
+        Try to find a map exit/warp point.
+        Returns the direction to walk, or None if no exit found.
+
+        Uses proper 2D pathfinding when possible, falls back to heuristics.
+        """
+        state = await self.read_state()
+
+        facing_map = {
+            Direction.UP: "up",
+            Direction.DOWN: "down",
+            Direction.LEFT: "left",
+            Direction.RIGHT: "right",
+        }
+
+        # Known stair positions for specific maps (from pokeyellow ROM disassembly)
+        # Format: map_id -> (stair_x, stair_y, direction_to_trigger)
+        # These take priority over WRAM warp data which can be corrupted
+        KNOWN_STAIRS = {
+            38: (7, 1, "up"),  # Player House 2F -> Player House 1F at (7,1), walk UP
+        }
+
+        # Use known positions if available (highest priority)
+        if state.map_id in KNOWN_STAIRS:
+            stair_x, stair_y, trigger_dir = KNOWN_STAIRS[state.map_id]
+            px, py = state.player_x, state.player_y
+            dx = stair_x - px
+            dy = stair_y - py
+
+            self._log(f"using known stairs at ({stair_x},{stair_y}), player at ({px},{py})")
+
+            # If already at stairs, trigger warp
+            if dx == 0 and dy == 0:
+                return trigger_dir
+
+            # Navigate to stairs
+            if abs(dx) > abs(dy):
+                return "right" if dx > 0 else "left"
+            else:
+                return "down" if dy > 0 else "up"
+
+        # Check current tile ahead for warp
+        if state.tile_ahead in mem.WARP_TILES:
+            return facing_map.get(state.facing, "down")
+
+        # Try proper pathfinding (only if no known stairs)
+        path = await self.find_path_to_warp()
+        if path:
+            return path[0]  # Return first step of the path
+
+        # Check for unreliable warp data (dest_map=0 often indicates corruption)
+        warp_data_reliable = True
+        if state.map_info and state.map_info.warps:
+            for warp in state.map_info.warps:
+                if warp.dest_map == 0:
+                    self._log(f"warp at ({warp.x},{warp.y}) has dest_map=0, data may be unreliable")
+                    warp_data_reliable = False
+                    break
+
+        # Fallback: Use warp locations with simple direction calculation
+        # Only trust warp data if it seems reliable
+        if state.map_info and state.map_info.warps and warp_data_reliable:
+            px, py = state.player_x, state.player_y
+
+            # Find nearest warp by Manhattan distance
+            nearest_warp = None
+            nearest_dist = float('inf')
+
+            for warp in state.map_info.warps:
+                dist = abs(warp.x - px) + abs(warp.y - py)
+                if dist < nearest_dist:
+                    nearest_dist = dist
+                    nearest_warp = warp
+
+            if nearest_warp:
+                dx = nearest_warp.x - px
+                dy = nearest_warp.y - py
+
+                self._log(f"fallback: nearest warp at ({nearest_warp.x},{nearest_warp.y}), delta=({dx},{dy})")
+
+                # Move towards the warp
+                if abs(dy) > abs(dx):
+                    return "down" if dy > 0 else "up"
+                elif abs(dx) > 0:
+                    return "right" if dx > 0 else "left"
+                else:
+                    # On the warp, step down to trigger it
+                    return "down"
+
+        # Generic strategy: explore map edges
+        if state.map_info:
+            px, py = state.player_x, state.player_y
+            width = state.map_info.width * 2  # Convert to tile coords
+            height = state.map_info.height * 2
+
+            # Try moving towards edges in priority order
+            if px < width - 2:
+                return "right"  # Try right edge first (many warps there)
+            if py > 1:
+                return "up"  # Then try top
+            if py < height - 2:
+                return "down"
+            if px > 0:
+                return "left"
+
+        return None
+
+    async def navigate_to_exit(self, max_attempts: int = 20) -> bool:
+        """
+        Actively try to navigate to and use a map exit.
+        Returns True if we changed maps.
+        """
+        self._log("navigating to exit")
+        initial_map = (await self.read_state()).map_id
+
+        for attempt in range(max_attempts):
+            state = await self.read_state()
+
+            # Check if we changed maps
+            if state.map_id != initial_map:
+                self._log(f"changed maps! {initial_map} -> {state.map_id}")
+                return True
+
+            # Find exit direction
+            exit_dir = await self.find_exit()
+            if exit_dir:
+                success = await self.walk(exit_dir, 1)
+                if not success:
+                    # Blocked, try other directions
+                    walkable = await self.get_walkable_directions()
+                    if walkable:
+                        await self.walk(walkable[0], 1)
+            else:
+                # No exit found, explore
+                walkable = await self.get_walkable_directions()
+                if walkable:
+                    # Vary direction based on attempt
+                    direction = walkable[attempt % len(walkable)]
+                    await self.walk(direction, 1)
+
+            await self.wait_frames(8)
+
+        return False
+
+    async def smart_navigate(
+        self,
+        target_type: str = "exit",
+        max_steps: int = 30,
+        use_vision: bool = True,
+    ) -> bool:
+        """
+        Navigate to a target using coded BFS pathfinding.
+
+        Uses vision analysis (if available) to detect obstacles not in memory,
+        but relies on coded pathfinding for actual movement.
+
+        Args:
+            target_type: What to navigate to ("exit", "npc", "item", "pokecenter")
+            max_steps: Maximum number of steps before giving up
+            use_vision: Whether to use vision for obstacle detection
+
+        Returns:
+            True if target was reached (e.g., map changed for exits)
+        """
+        self._log(f"smart navigation to {target_type} (max {max_steps} steps)")
+
+        state = await self.read_state()
+        initial_map = state.map_id
+        steps_taken = 0
+        consecutive_failures = 0
+
+        while steps_taken < max_steps:
+            state = await self.read_state()
+
+            # Check if we changed maps (success for exit targets)
+            if target_type == "exit" and state.map_id != initial_map:
+                self._log(f"reached exit! map {initial_map} -> {state.map_id}")
+                return True
+
+            # Optional: use vision to detect obstacles
+            if use_vision and self._strategy and consecutive_failures > 2:
+                screen_result = await self.screenshot()
+                if isinstance(screen_result, dict) and "image_base64" in screen_result:
+                    vision_info = await self._strategy.analyze_for_navigation(
+                        state=state,
+                        screenshot_b64=screen_result["image_base64"],
+                    )
+                    if vision_info.get("obstacles"):
+                        self._log(f"vision detected obstacles: {vision_info['obstacles']}")
+
+            # Use coded pathfinding
+            exit_dir = await self.find_exit()
+
+            if exit_dir:
+                self._log(f"coded pathfinding says: {exit_dir}")
+                before_state = await self.read_state()
+                before_pos = (before_state.player_x, before_state.player_y)
+
+                success = await self.walk(exit_dir, 1)
+                steps_taken += 1
+
+                after_state = await self.read_state()
+
+                # Check for map change
+                if after_state.map_id != initial_map:
+                    self._log(f"reached exit after {steps_taken} steps!")
+                    return True
+
+                # Track blocked tiles
+                if not success:
+                    dx = {"left": -1, "right": 1}.get(exit_dir, 0)
+                    dy = {"up": -1, "down": 1}.get(exit_dir, 0)
+                    blocked_x = before_pos[0] + dx
+                    blocked_y = before_pos[1] + dy
+                    self._blocked_tiles.add((state.map_id, blocked_x, blocked_y))
+                    self._log(f"marked ({blocked_x},{blocked_y}) as blocked")
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 0
+
+            else:
+                # No exit found, try exploration
+                walkable = await self.get_walkable_directions()
+                if walkable:
+                    direction = walkable[steps_taken % len(walkable)]
+                    self._log(f"exploring: {direction}")
+                    await self.walk(direction, 1)
+                    steps_taken += 1
+                else:
+                    self._log("no walkable directions, waiting...")
+                    await self.wait_frames(30)
+                    steps_taken += 1
+                    consecutive_failures += 1
+
+            await self.wait_frames(5)
+
+        self._log(f"failed to reach {target_type} after {steps_taken} steps")
+        return False
+
+    async def _build_map_ascii(self, state: GameState) -> str:
+        """Build a simple ASCII representation of the current map area."""
+        # Get map dimensions
+        width = state.map_info.width * 2 if state.map_info else 8
+        height = state.map_info.height * 2 if state.map_info else 8
+
+        # Limit size for LLM context
+        width = min(width, 16)
+        height = min(height, 16)
+
+        # Initialize grid
+        grid = [['.' for _ in range(width)] for _ in range(height)]
+
+        # Mark walls at edges
+        for x in range(width):
+            if 0 <= 0 < height:
+                grid[0][x] = '#'
+            if 0 <= height - 1 < height:
+                grid[height - 1][x] = '#'
+        for y in range(height):
+            if 0 <= 0 < width:
+                grid[y][0] = '#'
+            if 0 <= width - 1 < width:
+                grid[y][width - 1] = '#'
+
+        # Mark warps
+        if state.map_info and state.map_info.warps:
+            for warp in state.map_info.warps:
+                if 0 <= warp.y < height and 0 <= warp.x < width:
+                    grid[warp.y][warp.x] = 'W'
+
+        # Mark known blocked tiles
+        for (map_id, bx, by) in self._blocked_tiles:
+            if map_id == state.map_id and 0 <= by < height and 0 <= bx < width:
+                grid[by][bx] = '#'
+
+        # Mark player
+        px, py = state.player_x, state.player_y
+        if 0 <= py < height and 0 <= px < width:
+            grid[py][px] = 'P'
+
+        # Build string with coordinates
+        lines = ["    " + "".join(str(x % 10) for x in range(width))]
+        for y, row in enumerate(grid):
+            lines.append(f"{y:2d}: " + "".join(row))
+
+        return "\n".join(lines)
+
+    async def smart_navigate_to_exit(self, max_attempts: int = 30) -> bool:
+        """
+        Navigate to map exit using coded BFS pathfinding.
+
+        Uses vision analysis for obstacle detection if strategy engine is available.
+        """
+        return await self.smart_navigate(
+            target_type="exit",
+            max_steps=max_attempts,
+            use_vision=self._strategy is not None,
+        )
 
     # ============================================================
     # Battle Execution
@@ -328,6 +966,65 @@ class Routines:
         """Close current menu with B."""
         await self.press("b", 6)
         await self.wait_frames(10)
+
+    async def escape_stuck_state(self, movement_history: list = None) -> bool:
+        """
+        Attempt to escape from a stuck state (dialog loop, blocked position).
+        Uses backtracking if history is provided.
+        Returns True if position changed.
+        """
+        self._log("attempting to escape stuck state")
+        state = await self.read_state()
+        start_x, start_y, start_map = state.player_x, state.player_y, state.map_id
+
+        # Step 1: Mash B to exit any dialog/menu
+        for _ in range(5):
+            await self.press("b", 4)
+            await self.wait_frames(6)
+
+        # Step 2: Check if we're in a different mode now
+        state = await self.read_state()
+        if state.mode == GameMode.OVERWORLD:
+            self._log("escaped to overworld")
+
+        # Step 3: Try backtracking if we have history
+        if movement_history:
+            for i in range(min(3, len(movement_history))):
+                last_entry = movement_history[-(i+1)]
+                last_map, last_x, last_y, last_dir = last_entry
+
+                if last_map != state.map_id:
+                    continue  # Different map, skip
+
+                reverse = {"up": "down", "down": "up", "left": "right", "right": "left"}
+                rev_dir = reverse.get(last_dir, "down")
+
+                self._log(f"backtrack attempt {i+1}: {rev_dir}")
+                await self.press(rev_dir, 10)
+                await self.wait_frames(16)
+
+                new_state = await self.read_state()
+                if new_state.player_x != start_x or new_state.player_y != start_y:
+                    self._log(f"escaped via backtrack to ({new_state.player_x},{new_state.player_y})")
+                    return True
+
+        # Step 4: Try all directions
+        for direction in ["down", "left", "right", "up"]:
+            self._log(f"escape attempt: {direction}")
+            await self.press(direction, 10)
+            await self.wait_frames(16)
+
+            new_state = await self.read_state()
+            if new_state.player_x != start_x or new_state.player_y != start_y:
+                self._log(f"escaped via {direction} to ({new_state.player_x},{new_state.player_y})")
+                return True
+
+            if new_state.map_id != start_map:
+                self._log(f"escaped via map change to {new_state.map_id}")
+                return True
+
+        self._log("failed to escape")
+        return False
 
     # ============================================================
     # Composite Actions

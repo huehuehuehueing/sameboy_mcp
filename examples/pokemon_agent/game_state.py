@@ -14,7 +14,10 @@ from . import memory_map as mem
 class GameMode(Enum):
     """Current game mode detected from memory."""
     UNKNOWN = auto()
-    TITLE_SCREEN = auto()
+    TITLE_SCREEN = auto()    # Press Start screen
+    INTRO = auto()           # Oak's intro / copyright screens
+    MAIN_MENU = auto()       # Continue / New Game menu
+    NAME_ENTRY = auto()      # Entering player or rival name
     OVERWORLD = auto()
     BATTLE = auto()
     DIALOG = auto()
@@ -179,6 +182,61 @@ class BattleState:
 
 
 @dataclass
+class ScreenText:
+    """Text content read from screen memory."""
+    lines: list[str] = field(default_factory=list)
+    raw_tiles: list[list[int]] = field(default_factory=list)
+
+    @property
+    def full_text(self) -> str:
+        return "\n".join(self.lines)
+
+    @property
+    def has_text(self) -> bool:
+        return any(line.strip() for line in self.lines)
+
+
+@dataclass
+class WarpPoint:
+    """A warp/exit point on the map."""
+    x: int
+    y: int
+    dest_map: int
+    warp_id: int
+
+    def __str__(self):
+        return f"Warp({self.x},{self.y})->map{self.dest_map}"
+
+
+@dataclass
+class SpriteInfo:
+    """Information about a sprite/NPC on the map."""
+    index: int
+    x: int  # Map X coordinate
+    y: int  # Map Y coordinate
+    picture_id: int
+    facing: int
+    is_player: bool = False
+
+    def __str__(self):
+        kind = "Player" if self.is_player else f"NPC{self.index}"
+        return f"{kind}({self.x},{self.y})"
+
+
+@dataclass
+class MapInfo:
+    """Information about the current map."""
+    width: int = 0
+    height: int = 0
+    tileset: int = 0
+    connections: int = 0  # NSEW connection flags
+    visible_tiles: list[list[int]] = field(default_factory=list)
+    collision_map: list[list[bool]] = field(default_factory=list)  # True = walkable
+    warps: list[WarpPoint] = field(default_factory=list)
+    sprites: list[SpriteInfo] = field(default_factory=list)
+
+
+@dataclass
 class GameState:
     """Complete snapshot of the game state."""
     mode: GameMode
@@ -211,6 +269,16 @@ class GameState:
     text_active: bool = False
     pikachu_happiness: int = 0
 
+    # Screen text (decoded from tile map)
+    screen_text: ScreenText | None = None
+
+    # Map data for navigation
+    map_info: MapInfo | None = None
+
+    # Name entry state
+    naming_type: int = 0       # 0=player, 1=rival, 2=pokemon
+    letters_entered: int = 0   # Number of chars entered so far
+
     # Raw
     joypad_pressed: int = 0
     joypad_held: int = 0
@@ -229,7 +297,7 @@ class GameState:
     def party_species(self) -> list[int]:
         return [p.species for p in self.party]
 
-    def summary(self) -> str:
+    def summary(self, verbose: bool = False) -> str:
         lines = [
             f"Mode: {self.mode.name} | Frame: {self.frame}",
             f"Map: {self.map_name} ({self.map_id}) | Pos: ({self.player_x}, {self.player_y})",
@@ -243,6 +311,32 @@ class GameState:
             )
         if self.battle:
             lines.append(self.battle.summary)
+
+        # Show screen text if available and meaningful
+        if self.screen_text and self.screen_text.has_text:
+            # Get non-empty lines
+            text_lines = [l for l in self.screen_text.lines if l.strip()]
+            if text_lines:
+                preview = " | ".join(text_lines[:3])[:80]
+                lines.append(f"Screen: {preview}")
+
+        # Show name entry state
+        if self.mode == GameMode.NAME_ENTRY:
+            name_type = ["player", "rival", "pokemon"][self.naming_type] if self.naming_type < 3 else "???"
+            lines.append(f"Naming: {name_type} (entered: {self.letters_entered} chars)")
+
+        # Show map info in verbose mode
+        if verbose and self.map_info:
+            if self.map_info.warps:
+                warp_strs = [f"({w.x},{w.y})->map{w.dest_map}" for w in self.map_info.warps]
+                lines.append(f"Warps: {', '.join(warp_strs)}")
+            if self.map_info.sprites:
+                # Show NPCs (skip player sprite)
+                npcs = [s for s in self.map_info.sprites if not s.is_player]
+                if npcs:
+                    npc_strs = [f"NPC({s.x},{s.y})" for s in npcs]
+                    lines.append(f"NPCs: {', '.join(npc_strs)}")
+
         return "\n".join(lines)
 
 
@@ -319,6 +413,97 @@ class GameStateReader:
         for b in vals:
             result = result * 100 + ((b >> 4) * 10) + (b & 0x0F)
         return result
+
+    async def _read_screen_text(self) -> ScreenText:
+        """Read text from screen tile map (20x18 tiles)."""
+        # Read the visible tile map
+        tile_data = await self._read(mem.WRAM_TILE_MAP, 360)  # 20x18 = 360
+
+        lines = []
+        raw_tiles = []
+
+        for row in range(18):
+            row_tiles = tile_data[row * 20:(row + 1) * 20]
+            raw_tiles.append(row_tiles)
+
+            # Decode the row to text
+            line_text = mem.decode_text(row_tiles, max_len=20)
+            lines.append(line_text)
+
+        return ScreenText(lines=lines, raw_tiles=raw_tiles)
+
+    async def _read_warps(self) -> list[WarpPoint]:
+        """Read warp points on current map."""
+        warps = []
+        num_warps = await self._read_byte(mem.WRAM_NUM_WARPS)
+
+        # Each warp entry is 4 bytes: y, x, warp_id, dest_map
+        for i in range(min(num_warps, 16)):  # Max 16 warps
+            base = mem.WRAM_WARP_ENTRIES + (i * 4)
+            data = await self._read(base, 4)
+            if len(data) >= 4:
+                y, x, warp_id, dest_map = data[0], data[1], data[2], data[3]
+                # Coordinates are in 2x2 block units, convert to tile units
+                warps.append(WarpPoint(
+                    x=x,
+                    y=y,
+                    dest_map=dest_map,
+                    warp_id=warp_id,
+                ))
+
+        return warps
+
+    async def _read_sprites(self) -> list[SpriteInfo]:
+        """Read sprite/NPC positions on current map."""
+        sprites = []
+        num_sprites = await self._read_byte(mem.WRAM_NUM_SPRITES)
+
+        # Read up to 16 sprites (including player at index 0)
+        for i in range(min(num_sprites + 1, 16)):
+            base = mem.WRAM_SPRITE_DATA + (i * 16)
+            data = await self._read(base, 16)
+            if len(data) >= 14:
+                picture_id = data[mem.SPRITE_PICTURE_ID]
+                # Skip empty sprites
+                if picture_id == 0 and i > 0:
+                    continue
+
+                map_y = data[mem.SPRITE_MAP_Y]
+                map_x = data[mem.SPRITE_MAP_X]
+                facing = data[mem.SPRITE_FACING]
+
+                sprites.append(SpriteInfo(
+                    index=i,
+                    x=map_x,
+                    y=map_y,
+                    picture_id=picture_id,
+                    facing=facing,
+                    is_player=(i == 0),
+                ))
+
+        return sprites
+
+    async def _read_map_info(self) -> MapInfo:
+        """Read current map layout information."""
+        width = await self._read_byte(mem.WRAM_CUR_MAP_WIDTH)
+        height = await self._read_byte(mem.WRAM_CUR_MAP_HEIGHT)
+        tileset = await self._read_byte(mem.WRAM_CUR_MAP_TILESET)
+        connections = await self._read_byte(mem.WRAM_MAP_CONNECTIONS)
+
+        # Read warp points
+        warps = await self._read_warps()
+
+        # Read sprites
+        sprites = await self._read_sprites()
+
+        return MapInfo(
+            width=width,
+            height=height,
+            tileset=tileset,
+            connections=connections,
+            warps=warps,
+            sprites=sprites,
+        )
 
     async def _read_pokemon(self, base_addr: int) -> Pokemon:
         """Read a Pokemon structure from memory."""
@@ -418,6 +603,14 @@ class GameStateReader:
         text_box_id: int,
         ignore_input: int,
         pc: int,
+        naming_screen: int,
+        party_count: int,
+        oak_speech: int,
+        badges: int,
+        screen_text: ScreenText | None = None,
+        textbox_open: int = 0,
+        script_running: int = 0,
+        joypad_sim: int = 0,
     ) -> GameMode:
         """Detect current game mode from memory values."""
         # Lost battle
@@ -428,16 +621,94 @@ class GameStateReader:
         if in_battle in (1, 2):
             return GameMode.BATTLE
 
-        # Title screen detection: map_id 0 with specific PC ranges
-        # or before the game has properly initialized
-        if map_id == 0 and pc < 0x4000:
+        # Name entry screen - check screen text for character grid
+        # This is more reliable than the naming_screen memory address
+        if screen_text and screen_text.has_text:
+            text = screen_text.full_text.upper()
+            # Name entry screens show various prompts
+            if ("YOUR NAME" in text or "HIS NAME" in text or "RIVAL NAME" in text or "NICKNAME" in text):
+                return GameMode.NAME_ENTRY
+            # Character grid pattern: "A B C D E F G H I"
+            if "A B C D E F G H I" in text:
+                return GameMode.NAME_ENTRY
+
+        # Name entry via memory flag
+        if naming_screen != 0:
+            return GameMode.NAME_ENTRY
+
+        # Title screen / Intro detection
+        # Early game before player has Pokemon and before Oak speech is complete
+        if party_count == 0 and badges == 0:
+            # Check for specific title/intro indicators
+            if map_id == 0:
+                # Check screen text for known strings
+                if screen_text and screen_text.has_text:
+                    text = screen_text.full_text.upper()
+                    if "CONTINUE" in text or "NEW GAME" in text or "OPTION" in text:
+                        return GameMode.MAIN_MENU
+                    if "PRESS START" in text or "START" in text:
+                        return GameMode.TITLE_SCREEN
+                # Check PC range for title screen code
+                if pc < 0x4000:
+                    return GameMode.TITLE_SCREEN
+                # Oak intro sequence (PC in specific ROM bank)
+                if pc >= 0x4000 and pc < 0x8000:
+                    # Oak speech not complete
+                    if oak_speech & 0x40 == 0:
+                        return GameMode.INTRO
+
+        # Main menu (after title, before gameplay)
+        if map_id == 0 and party_count == 0:
+            if screen_text and screen_text.has_text:
+                text = screen_text.full_text.upper()
+                if "CONTINUE" in text or "NEW GAME" in text:
+                    return GameMode.MAIN_MENU
             return GameMode.TITLE_SCREEN
 
-        # Text/dialog active
-        if text_box_id != 0 or ignore_input > 0:
+        # Check for scripted sequence using wSimulatedJoypadStatesIndex
+        # This is the definitive way to detect if the game is controlling the player
+        # When non-zero, button presses are being simulated for cutscenes/intros
+        # Note: joypad_sim here is from the old address, we also check ignore_input
+        #
+        # IMPORTANT: Only use this for INTRO if we're still on the title/intro map (map_id == 0)
+        # Once we're in a real map (like Player House 2F = map 38), the game has transitioned
+        # to actual gameplay even if ignore_input is still counting down.
+        if joypad_sim != 0:
+            # Joypad simulation is active - game is controlling player
+            if party_count == 0 and badges == 0 and map_id == 0:
+                return GameMode.INTRO
             return GameMode.DIALOG
 
-        # Overworld (default)
+        # ignore_input counter only indicates INTRO if we're still on map 0
+        # Once in a real map, ignore_input may still be counting but player is in gameplay
+        if ignore_input > 10 and map_id == 0:
+            if party_count == 0 and badges == 0:
+                return GameMode.INTRO
+            return GameMode.DIALOG
+
+        # Text/dialog detection using actual screen tile analysis
+        # This is more reliable than memory flags for standard dialog boxes
+        from .pathfinding import is_text_box_visible, has_text_content
+
+        # Check screen tiles for actual text box borders
+        has_visible_textbox = False
+        has_text_chars = False
+        if screen_text and screen_text.raw_tiles:
+            flat_tiles = []
+            for row in screen_text.raw_tiles:
+                flat_tiles.extend(row)
+            has_visible_textbox = is_text_box_visible(flat_tiles)
+            has_text_chars = has_text_content(flat_tiles)
+
+        # Dialog is active if we see text box borders AND text content
+        if has_visible_textbox and has_text_chars:
+            return GameMode.DIALOG
+
+        # Also check text_box_id as secondary indicator
+        if text_box_id != 0 and text_box_id != 0xFF and has_text_chars:
+            return GameMode.DIALOG
+
+        # Overworld (default for gameplay)
         return GameMode.OVERWORLD
 
     async def read_state(self) -> GameState:
@@ -464,9 +735,29 @@ class GameStateReader:
         joy_held = await self._read_byte(mem.HRAM_JOY_HELD)
         frame = await self._read_byte(mem.HRAM_FRAME_COUNTER)
 
+        # Read additional state for mode detection
+        naming_screen = await self._read_byte(mem.WRAM_NAMING_SCREEN_TYPE)
+        oak_speech = await self._read_byte(mem.WRAM_OAK_SPEECH_STATUS)
+        letters_entered = await self._read_byte(mem.WRAM_NUM_LETTERS_ENTERED)
+
+        # Read dialog state flags for more accurate detection
+        textbox_open = await self._read_byte(mem.WRAM_TEXTBOX_OPEN)
+        script_running = await self._read_byte(mem.WRAM_SCRIPT_RUNNING)
+        # Read the ACTUAL joypad simulation index from disassembly
+        # When non-zero, game is controlling player (cutscenes, intros)
+        joypad_sim = await self._read_byte(mem.WRAM_SIM_JOYPAD_STATES_INDEX)
+
         # Get CPU PC for title screen detection
         regs = await self._call("get_registers", {})
         pc = regs.get("PC", 0) if isinstance(regs, dict) else 0
+
+        # Read screen text for dialog/menu detection
+        screen_text = await self._read_screen_text()
+
+        # Read map info for navigation
+        map_info = None
+        if map_id != 0 or party_count > 0:  # Only read in actual gameplay
+            map_info = await self._read_map_info()
 
         # Parse direction
         try:
@@ -474,8 +765,23 @@ class GameStateReader:
         except ValueError:
             facing = Direction.DOWN
 
-        # Detect mode
-        mode = self._detect_mode(in_battle, map_id, menu_cursor, text_box_id, ignore_input, pc)
+        # Detect mode with all available signals
+        mode = self._detect_mode(
+            in_battle=in_battle,
+            map_id=map_id,
+            menu_cursor=menu_cursor,
+            text_box_id=text_box_id,
+            ignore_input=ignore_input,
+            pc=pc,
+            naming_screen=naming_screen,
+            party_count=party_count,
+            oak_speech=oak_speech,
+            badges=badges,
+            screen_text=screen_text,
+            textbox_open=textbox_open,
+            script_running=script_running,
+            joypad_sim=joypad_sim,
+        )
 
         # Read party Pokemon
         party = []
@@ -550,6 +856,10 @@ class GameStateReader:
             menu_max=menu_max,
             text_active=(text_box_id != 0 or ignore_input > 0),
             pikachu_happiness=pikachu,
+            screen_text=screen_text,
+            map_info=map_info,
+            naming_type=naming_screen,
+            letters_entered=letters_entered,
             joypad_pressed=joy_pressed,
             joypad_held=joy_held,
         )
