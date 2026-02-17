@@ -160,10 +160,32 @@ def run_with_mcp(rom_path: Path, model: str, scale: int, state_path: Path | None
     # Start emulator thread
     emu_thread.start()
 
-    # Enable live display
-    result = emu_thread.send_command(CommandType.ENABLE_LIVE_DISPLAY, {"scale": scale})
-    if not result.get("success"):
-        print(f"Warning: Failed to enable live display: {result.get('error')}")
+    # On macOS, SDL2 must create windows on the main thread.
+    use_main_thread_sdl = sys.platform == "darwin"
+    display_obj = None
+
+    if use_main_thread_sdl:
+        from sameboy_mcp.emulator.display import LiveDisplay
+        width, height = emu.get_screen_size()
+        title = f"SameBoy MCP - {emu.rom_title}" if emu.rom_title else "SameBoy MCP"
+        display_obj = LiveDisplay(width=width, height=height, scale=scale, title=title)
+
+        def on_input(key: str, pressed: bool):
+            try:
+                emu.set_key(key, pressed)
+            except ValueError:
+                pass
+
+        display_obj.set_input_callback(on_input)
+        if not display_obj.init_window():
+            print("Warning: Failed to enable live display")
+            display_obj = None
+        else:
+            emu._live_display = display_obj
+    else:
+        result = emu_thread.send_command(CommandType.ENABLE_LIVE_DISPLAY, {"scale": scale})
+        if not result.get("success"):
+            print(f"Warning: Failed to enable live display: {result.get('error')}")
 
     # Initialize audio
     audio_handler = None
@@ -187,7 +209,7 @@ def run_with_mcp(rom_path: Path, model: str, scale: int, state_path: Path | None
     print(f"\nLive display opened!")
     print("Controls: Arrow keys=D-pad, Z=A, X=B, Enter=Start, Shift=Select")
     print(f"\nMCP Server ready at: http://{mcp_host}:{mcp_port}/sse")
-    print("Connect with: python examples/claude_agent.py --server-url http://{mcp_host}:{mcp_port}/sse ...")
+    print(f"Connect with: python examples/claude_agent.py --server-url http://{mcp_host}:{mcp_port}/sse ...")
     print("\nPress Ctrl+C to quit.")
 
     # Run SSE server
@@ -199,13 +221,30 @@ def run_with_mcp(rom_path: Path, model: str, scale: int, state_path: Path | None
         await uvicorn_server.serve()
 
     try:
-        asyncio.run(run_sse_server())
+        if use_main_thread_sdl and display_obj:
+            # macOS: run SSE server in background, SDL event loop on main thread
+            server_thread = threading.Thread(
+                target=lambda: asyncio.run(run_sse_server()),
+                daemon=True
+            )
+            server_thread.start()
+
+            while display_obj.is_running:
+                if not display_obj.pump_events():
+                    break
+                import time
+                time.sleep(0.001)
+        else:
+            asyncio.run(run_sse_server())
     except KeyboardInterrupt:
         print("\nInterrupted by user")
     finally:
         print("\nShutting down...")
         if audio_handler:
             audio_handler.disable()
+        if display_obj:
+            display_obj.cleanup()
+            emu._live_display = None
         emu_thread.stop()
         emu.free()
         print("Done!")
@@ -351,13 +390,41 @@ def main():
         print("Turbo mode: ON")
 
     # Enable live display
-    title = f"SameBoy - {emu.rom_title}"
-    if not emu.enable_live_display(scale=args.scale):
-        print("Error: Failed to enable live display")
-        if audio_handler:
-            audio_handler.disable()
-        emu.free()
-        sys.exit(1)
+    # On macOS, SDL2 must create windows on the main thread.
+    # We use init_window() + pump_events() instead of the threaded start().
+    use_main_thread_sdl = sys.platform == "darwin"
+
+    if use_main_thread_sdl:
+        from sameboy_mcp.emulator.display import LiveDisplay
+
+        width, height = emu.get_screen_size()
+        title = f"SameBoy MCP - {emu.rom_title}" if emu.rom_title else "SameBoy MCP"
+        display = LiveDisplay(width=width, height=height, scale=args.scale, title=title)
+
+        def on_input(key: str, pressed: bool):
+            try:
+                emu.set_key(key, pressed)
+            except ValueError:
+                pass
+
+        display.set_input_callback(on_input)
+
+        if not display.init_window():
+            print("Error: Failed to enable live display")
+            if audio_handler:
+                audio_handler.disable()
+            emu.free()
+            sys.exit(1)
+
+        # Wire vblank to feed frames to display
+        emu._live_display = display
+    else:
+        if not emu.enable_live_display(scale=args.scale):
+            print("Error: Failed to enable live display")
+            if audio_handler:
+                audio_handler.disable()
+            emu.free()
+            sys.exit(1)
 
     print(f"\nLive display opened!")
     print("Controls: Arrow keys=D-pad, Z=A, X=B, Enter=Start, Shift=Select")
@@ -379,24 +446,32 @@ def main():
     frame_duration = 1.0 / 60.0  # 60 FPS
 
     try:
-        while running and emu.live_display_enabled:
-            current_time = time.time()
+        if use_main_thread_sdl:
+            # macOS: SDL events on main thread, emulator runs frames here too
+            while running and display.is_running:
+                if not paused:
+                    emu.run_frame()
+                    elapsed = time.time() - last_frame_time
+                    if elapsed < frame_duration:
+                        time.sleep(frame_duration - elapsed)
+                    last_frame_time = time.time()
+                else:
+                    time.sleep(0.016)
 
-            if not paused:
-                # Run frame
-                emu.run_frame()
-
-                # Frame timing (audio sync is handled by the audio callback)
-                elapsed = time.time() - last_frame_time
-                if elapsed < frame_duration:
-                    time.sleep(frame_duration - elapsed)
-                last_frame_time = time.time()
-            else:
-                # When paused, sleep to prevent CPU spinning
-                time.sleep(0.016)
-
-            # Check for special keys via SDL events (handled in display thread)
-            # Note: Game controls are handled by the display's input callback
+                # Pump SDL events on main thread
+                if not display.pump_events():
+                    running = False
+        else:
+            # Linux/other: SDL runs in its own thread
+            while running and emu.live_display_enabled:
+                if not paused:
+                    emu.run_frame()
+                    elapsed = time.time() - last_frame_time
+                    if elapsed < frame_duration:
+                        time.sleep(frame_duration - elapsed)
+                    last_frame_time = time.time()
+                else:
+                    time.sleep(0.016)
 
     except KeyboardInterrupt:
         print("\nInterrupted by user")
@@ -405,7 +480,11 @@ def main():
     print("\nShutting down...")
     if audio_handler:
         audio_handler.disable()
-    emu.disable_live_display()
+    if use_main_thread_sdl:
+        display.cleanup()
+        emu._live_display = None
+    else:
+        emu.disable_live_display()
     emu.free()
     print("Done!")
 

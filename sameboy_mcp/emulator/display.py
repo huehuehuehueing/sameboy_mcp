@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """SDL2-based live display window for the emulator."""
 
+import sys
 import threading
 import ctypes
 from typing import Optional, Callable
@@ -63,10 +64,17 @@ class LiveDisplay:
         # Track currently pressed keys (for proper release on disable)
         self._pressed_keys: set[str] = set()
 
-    def start(self) -> None:
-        """Start the display window in a separate thread."""
+    def start(self) -> bool:
+        """Start the display window in a separate thread.
+
+        On macOS, SDL2 windows must be created on the main thread.
+        Use init_window() + pump_events() instead on macOS.
+
+        Returns:
+            True if the display started successfully
+        """
         if self._running:
-            return
+            return True
 
         self._running = True
         self._thread = threading.Thread(target=self._display_loop, daemon=True)
@@ -76,12 +84,110 @@ class LiveDisplay:
         while not self._initialized and self._running:
             pass
 
+        return self._initialized
+
     def stop(self) -> None:
         """Stop the display window."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
+
+    # ---- Main-thread display methods (required on macOS) ----
+
+    def init_window(self) -> bool:
+        """Initialize SDL and create the window on the current thread.
+
+        On macOS, this MUST be called from the main thread.
+        After calling this, use pump_events() in your main loop
+        to process SDL events and render frames.
+
+        Returns:
+            True if initialization succeeded
+        """
+        if self._initialized:
+            return True
+
+        if sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO) < 0:
+            print(f"SDL initialization failed: {sdl2.SDL_GetError()}")
+            return False
+
+        self._window = sdl2.SDL_CreateWindow(
+            self.title.encode('utf-8'),
+            sdl2.SDL_WINDOWPOS_CENTERED,
+            sdl2.SDL_WINDOWPOS_CENTERED,
+            self.width * self.scale,
+            self.height * self.scale,
+            sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_RESIZABLE
+        )
+
+        if not self._window:
+            print(f"Window creation failed: {sdl2.SDL_GetError()}")
+            sdl2.SDL_Quit()
+            return False
+
+        self._renderer = sdl2.SDL_CreateRenderer(
+            self._window, -1,
+            sdl2.SDL_RENDERER_ACCELERATED | sdl2.SDL_RENDERER_PRESENTVSYNC
+        )
+
+        if not self._renderer:
+            print(f"Renderer creation failed: {sdl2.SDL_GetError()}")
+            sdl2.SDL_DestroyWindow(self._window)
+            sdl2.SDL_Quit()
+            return False
+
+        sdl2.SDL_SetHint(sdl2.SDL_HINT_RENDER_SCALE_QUALITY, b"nearest")
+        self._create_texture()
+        self._running = True
+        self._initialized = True
+        return True
+
+    def pump_events(self) -> bool:
+        """Process SDL events and render one frame.
+
+        Call this repeatedly from your main loop after init_window().
+        Returns False if the window was closed.
+        """
+        if not self._initialized:
+            return False
+
+        event = sdl2.SDL_Event()
+        while sdl2.SDL_PollEvent(ctypes.byref(event)):
+            self._handle_event(event)
+
+        if not self._running:
+            return False
+
+        # Update texture with new frame if available
+        try:
+            pixels = self._frame_queue.get_nowait()
+            self._update_texture(pixels)
+        except Empty:
+            pass
+
+        # Render
+        sdl2.SDL_RenderClear(self._renderer)
+        sdl2.SDL_RenderCopy(self._renderer, self._texture, None, None)
+        sdl2.SDL_RenderPresent(self._renderer)
+
+        return True
+
+    def cleanup(self) -> None:
+        """Clean up SDL resources. Call from the same thread as init_window()."""
+        if self._texture:
+            sdl2.SDL_DestroyTexture(self._texture)
+            self._texture = None
+        if self._renderer:
+            sdl2.SDL_DestroyRenderer(self._renderer)
+            self._renderer = None
+        if self._window:
+            sdl2.SDL_DestroyWindow(self._window)
+            self._window = None
+        if self._initialized:
+            sdl2.SDL_Quit()
+        self._initialized = False
+        self._running = False
 
     def update_frame(self, pixels: bytes) -> None:
         """

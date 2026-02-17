@@ -703,7 +703,9 @@ class SameBoyEmulator:
                 pass  # Ignore unknown keys
 
         self._live_display.set_input_callback(on_input)
-        self._live_display.start()
+        if not self._live_display.start():
+            self._live_display = None
+            return False
         return True
 
     def disable_live_display(self) -> None:
