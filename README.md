@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server that provides AI agents with full access to Game Boy and Game Boy Color emulation via the [SameBoy](https://sameboy.github.io/) emulator.
 
+![Pokemon Yellow running in SameBoy MCP](docs/screenshots/pokemon_yellow_oak.png)
+
 ## Features
 
 - **Memory Inspection**: Read/write any memory address, monitor changes, compare snapshots
