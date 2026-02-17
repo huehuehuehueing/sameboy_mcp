@@ -1,16 +1,68 @@
 """2D Pathfinding for Pokemon Yellow.
 
-Uses BFS to find paths through the map, accounting for:
+Uses BFS and A* to find paths through the map, accounting for:
 - Collision tiles (walls, furniture, water)
 - Sprite/NPC positions
 - Map boundaries
+- Tile-pair collision rules (certain tile transitions are blocked)
 """
 
+import heapq
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
 from . import memory_map as mem
+
+
+# ============================================================
+# Tile-Pair Collision Data
+# ============================================================
+# Certain tile pairs block movement between them even if both tiles
+# are individually walkable. Format: (tileset_name, tile1, tile2)
+# Bidirectional: blocked in both directions.
+
+TILE_PAIR_COLLISIONS_LAND = [
+    ("CAVERN", 288, 261),
+    ("CAVERN", 321, 261),
+    ("FOREST", 304, 302),
+    ("CAVERN", 298, 261),
+    ("CAVERN", 261, 289),
+    ("FOREST", 338, 302),
+    ("FOREST", 341, 302),
+    ("FOREST", 342, 302),
+    ("FOREST", 288, 302),
+    ("FOREST", 350, 302),
+    ("FOREST", 351, 302),
+]
+
+TILE_PAIR_COLLISIONS_WATER = [
+    ("FOREST", 276, 302),
+    ("FOREST", 328, 302),
+    ("CAVERN", 276, 261),
+]
+
+
+def can_move_between_tiles(tile_from: int, tile_to: int, tileset_name: str) -> bool:
+    """Check if movement between two tiles is allowed given tile-pair rules.
+
+    Args:
+        tile_from: Tile ID the player is moving from
+        tile_to: Tile ID the player is moving to
+        tileset_name: Name of the current tileset (e.g., "FOREST", "CAVERN")
+
+    Returns:
+        True if the move is allowed, False if blocked by a tile-pair rule
+    """
+    for ts, t1, t2 in TILE_PAIR_COLLISIONS_LAND:
+        if ts == tileset_name:
+            if (tile_from == t1 and tile_to == t2) or (tile_from == t2 and tile_to == t1):
+                return False
+    for ts, t1, t2 in TILE_PAIR_COLLISIONS_WATER:
+        if ts == tileset_name:
+            if (tile_from == t1 and tile_to == t2) or (tile_from == t2 and tile_to == t1):
+                return False
+    return True
 
 
 @dataclass
@@ -197,6 +249,92 @@ def find_path_to_nearest(collision_map: CollisionMap, start: Point, goals: list[
     return None
 
 
+def find_path_astar(
+    collision_map: CollisionMap,
+    start: Point,
+    goal: Point,
+    tile_map: Optional[dict[tuple[int, int], int]] = None,
+    tileset_name: Optional[str] = None,
+) -> Optional[Path]:
+    """Find shortest path using A* with Manhattan distance heuristic.
+
+    Optionally uses tile-pair collision rules when tile_map and tileset_name
+    are provided. Falls back to standard A* (equivalent to BFS on uniform
+    cost grid) when tile data is unavailable.
+
+    Args:
+        collision_map: The map with walkable/blocked tiles
+        start: Starting position
+        goal: Target position
+        tile_map: Optional dict mapping (x, y) -> tile ID for tile-pair checks
+        tileset_name: Optional tileset name for tile-pair collision lookup
+
+    Returns:
+        Path object with steps and positions, or None if no path exists
+    """
+    if start == goal:
+        return Path(steps=[], positions=[start])
+
+    if not collision_map.is_walkable(goal.x, goal.y):
+        return None
+
+    check_tile_pairs = tile_map is not None and tileset_name is not None
+
+    # Priority queue: (f_score, counter, x, y, path)
+    # counter breaks ties for equal f_scores
+    counter = 0
+    open_set = [(0, counter, start.x, start.y, [])]
+    g_scores: dict[tuple[int, int], int] = {(start.x, start.y): 0}
+
+    directions = [
+        (0, 1, "down"),
+        (-1, 0, "left"),
+        (1, 0, "right"),
+        (0, -1, "up"),
+    ]
+
+    while open_set:
+        f, _, x, y, path = heapq.heappop(open_set)
+
+        current_g = g_scores.get((x, y), float("inf"))
+        # Skip if we've already found a better path to this node
+        if len(path) > current_g:
+            continue
+
+        for dx, dy, direction in directions:
+            nx, ny = x + dx, y + dy
+
+            if not collision_map.is_walkable(nx, ny):
+                continue
+
+            # Check tile-pair collisions if data available
+            if check_tile_pairs:
+                from_tile = tile_map.get((x, y))
+                to_tile = tile_map.get((nx, ny))
+                if from_tile is not None and to_tile is not None:
+                    if not can_move_between_tiles(from_tile, to_tile, tileset_name):
+                        continue
+
+            new_g = current_g + 1
+
+            if new_g < g_scores.get((nx, ny), float("inf")):
+                g_scores[(nx, ny)] = new_g
+                # Manhattan distance heuristic
+                h = abs(nx - goal.x) + abs(ny - goal.y)
+                f_score = new_g + h
+                new_path = path + [(direction, nx, ny)]
+
+                if nx == goal.x and ny == goal.y:
+                    steps = [p[0] for p in new_path]
+                    positions = [start] + [Point(p[1], p[2]) for p in new_path]
+                    return Path(steps=steps, positions=positions)
+
+                counter += 1
+                heapq.heappush(open_set, (f_score, counter, nx, ny, new_path))
+
+    return None
+
+
 class MapReader:
     """Reads map collision data from game memory."""
 
@@ -325,6 +463,43 @@ class MapReader:
                 warps.append(Point(x, y))
 
         return warps
+
+    async def read_tileset(self) -> tuple[int, str]:
+        """Read the current map's tileset ID and name.
+
+        Returns:
+            (tileset_id, tileset_name) tuple
+        """
+        from .pokemon_data import TILESET_NAMES
+        tileset_id = await self._read_byte(mem.WRAM_CUR_MAP_TILESET)
+        tileset_name = TILESET_NAMES.get(tileset_id, "UNKNOWN")
+        return tileset_id, tileset_name
+
+    async def read_tile_map(self) -> dict[tuple[int, int], int]:
+        """Read the current map's tile data for tile-pair collision checks.
+
+        Returns:
+            Dict mapping (x, y) tile coords to tile IDs
+        """
+        width = await self._read_byte(mem.WRAM_CUR_MAP_WIDTH)
+        height = await self._read_byte(mem.WRAM_CUR_MAP_HEIGHT)
+
+        if width == 0 or height == 0:
+            return {}
+
+        map_data_len = width * height
+        map_data = await self._read_bytes(mem.WRAM_MAP_DATA, map_data_len)
+
+        tile_map = {}
+        for i, block_id in enumerate(map_data):
+            bx = i % width
+            by = i // width
+            # Each block covers 2x2 tiles; store block ID for all 4 tiles
+            for dx in range(2):
+                for dy in range(2):
+                    tile_map[(bx * 2 + dx, by * 2 + dy)] = block_id
+
+        return tile_map
 
 
 def is_text_box_visible(screen_tiles: list[int], screen_width: int = 20, screen_height: int = 18) -> bool:

@@ -111,7 +111,7 @@ SPECIES = {
     0x36: _s("Magneton",    "Electric", "Electric",  50,  60,  95,  70, 120),
     # Doduo/Dodrio
     0x46: _s("Doduo",       "Normal",   "Flying",    35,  85,  45,  75,  35),
-    0xAA: _s("Dodrio",      "Normal",   "Flying",    60, 110,  70, 100,  60),
+    0x74: _s("Dodrio",      "Normal",   "Flying",    60, 110,  70, 100,  60),
     # Gastly line
     0x19: _s("Gastly",      "Ghost",    "Poison",    30,  35,  30,  80, 100),
     0x93: _s("Haunter",     "Ghost",    "Poison",    45,  50,  45,  95, 115),
@@ -204,6 +204,43 @@ SPECIES = {
     0x91: _s("Marowak",     "Ground",   "Ground",    60,  80, 110,  45,  50),
     # Lickitung
     0x0B: _s("Lickitung",   "Normal",   "Normal",    90,  55,  75,  30,  60),
+    # Paras/Parasect
+    0x6D: _s("Paras",        "Bug",      "Grass",     35,  70,  55,  25,  55),
+    0x2E: _s("Parasect",     "Bug",      "Grass",     60,  95,  80,  30,  80),
+    # Venonat/Venomoth
+    0x41: _s("Venonat",      "Bug",      "Poison",    60,  55,  50,  45,  40),
+    0x77: _s("Venomoth",     "Bug",      "Poison",    70,  65,  60,  90,  90),
+    # Bellsprout line
+    0xBC: _s("Bellsprout",   "Grass",    "Poison",    50,  75,  35,  40,  70),
+    0xBD: _s("Weepinbell",   "Grass",    "Poison",    65,  90,  50,  55,  85),
+    0xBE: _s("Victreebel",   "Grass",    "Poison",    80, 105,  65,  70, 100),
+    # Farfetch'd
+    0x40: _s("Farfetch'd",   "Normal",   "Flying",    52,  65,  55,  60,  58),
+    # Seel/Dewgong
+    0x3A: _s("Seel",         "Water",    "Water",     65,  45,  55,  45,  70),
+    0x78: _s("Dewgong",      "Water",    "Ice",       90,  70,  80,  70,  95),
+    # Grimer/Muk
+    0x0D: _s("Grimer",       "Poison",   "Poison",    80,  80,  50,  25,  40),
+    0x88: _s("Muk",          "Poison",   "Poison",   105, 105,  75,  50,  65),
+    # Shellder/Cloyster
+    0x17: _s("Shellder",     "Water",    "Water",     30,  65, 100,  40,  45),
+    0x8B: _s("Cloyster",     "Water",    "Ice",       50,  95, 180,  70,  85),
+    # Drowzee/Hypno
+    0x30: _s("Drowzee",      "Psychic",  "Psychic",   60,  48,  45,  42,  90),
+    0x81: _s("Hypno",        "Psychic",  "Psychic",   85,  73,  67,  67, 115),
+    # Krabby/Kingler
+    0x4E: _s("Krabby",       "Water",    "Water",     30, 105,  90,  50,  25),
+    0x8A: _s("Kingler",      "Water",    "Water",     55, 130, 115,  75,  50),
+    # Tangela
+    0x1E: _s("Tangela",      "Grass",    "Grass",     65,  55, 115,  60, 100),
+    # Omanyte/Omastar
+    0x62: _s("Omanyte",      "Rock",     "Water",     35,  40, 100,  35,  90),
+    0x63: _s("Omastar",      "Rock",     "Water",     70,  60, 125,  55, 115),
+    # Kabuto/Kabutops
+    0x5A: _s("Kabuto",       "Rock",     "Water",     30,  80,  90,  55,  45),
+    0x5B: _s("Kabutops",     "Rock",     "Water",     60, 115, 105,  80,  70),
+    # Aerodactyl
+    0xAB: _s("Aerodactyl",   "Rock",     "Flying",    80, 105,  65, 130,  60),
 }
 
 
@@ -216,28 +253,33 @@ INTERNAL_TO_POKEDEX = {
     0x06: 100, 0x07: 34,  0x08: 80,  0x09: 2,   0x0A: 103,
     0x0B: 108, 0x0C: 102, 0x0D: 88,  0x0E: 94,  0x0F: 29,
     0x10: 31,  0x11: 104, 0x12: 111, 0x13: 131, 0x14: 59,
-    0x15: 151, 0x16: 130, 0x18: 72,  0x19: 92,  0x1A: 123,
-    0x1B: 120, 0x1C: 9,   0x1D: 127, 0x21: 58,  0x22: 95,
-    0x23: 22,  0x24: 16,  0x25: 79,  0x26: 64,  0x27: 75,
-    0x28: 113, 0x29: 67,  0x2A: 122, 0x2B: 106, 0x2C: 107,
-    0x2D: 24,  0x2F: 54,  0x31: 76,  0x33: 126, 0x35: 125,
-    0x36: 82,  0x37: 109, 0x39: 56,  0x3B: 50,  0x3C: 128,
-    0x40: 83,  0x42: 149, 0x46: 84,  0x47: 60,  0x48: 124,
-    0x49: 146, 0x4A: 144, 0x4B: 145, 0x4C: 132, 0x4D: 52,
-    0x52: 37,  0x53: 38,  0x54: 25,  0x55: 26,  0x58: 147,
-    0x59: 148, 0x5C: 116, 0x5D: 117, 0x60: 27,  0x61: 28,
-    0x64: 39,  0x65: 40,  0x66: 133, 0x67: 136, 0x68: 135,
-    0x69: 134, 0x6A: 66,  0x6B: 41,  0x6C: 23,  0x6E: 61,
-    0x6F: 62,  0x70: 13,  0x71: 14,  0x72: 15,  0x75: 57,
-    0x76: 51,  0x7B: 10,  0x7C: 11,  0x7D: 12,  0x7E: 68,
-    0x80: 55,  0x82: 42,  0x83: 150, 0x84: 143, 0x85: 129,
-    0x8D: 101, 0x8E: 36,  0x8F: 110, 0x90: 53,  0x91: 105,
-    0x93: 93,  0x94: 63,  0x95: 65,  0x96: 17,  0x97: 18,
-    0x98: 121, 0x99: 1,   0x9A: 3,   0x9B: 73,  0x9D: 118,
-    0x9E: 119, 0xA3: 77,  0xA4: 78,  0xA5: 19,  0xA6: 20,
-    0xA7: 33,  0xA8: 30,  0xA9: 74,  0xAA: 137, 0xAD: 81,
+    0x15: 151, 0x16: 130, 0x17: 90,  0x18: 72,  0x19: 92,
+    0x1A: 123, 0x1B: 120, 0x1C: 9,   0x1D: 127, 0x1E: 114,
+    0x21: 58,  0x22: 95,  0x23: 22,  0x24: 16,  0x25: 79,
+    0x26: 64,  0x27: 75,  0x28: 113, 0x29: 67,  0x2A: 122,
+    0x2B: 106, 0x2C: 107, 0x2D: 24,  0x2E: 47,  0x2F: 54,
+    0x30: 96,  0x31: 76,  0x33: 126, 0x35: 125, 0x36: 82,
+    0x37: 109, 0x39: 56,  0x3A: 86,  0x3B: 50,  0x3C: 128,
+    0x40: 83,  0x41: 48,  0x42: 149, 0x46: 84,  0x47: 60,
+    0x48: 124, 0x49: 146, 0x4A: 144, 0x4B: 145, 0x4C: 132,
+    0x4D: 52,  0x4E: 98,  0x52: 37,  0x53: 38,  0x54: 25,
+    0x55: 26,  0x58: 147, 0x59: 148, 0x5A: 140, 0x5B: 141,
+    0x5C: 116, 0x5D: 117, 0x60: 27,  0x61: 28,  0x62: 138,
+    0x63: 139, 0x64: 39,  0x65: 40,  0x66: 133, 0x67: 136,
+    0x68: 135, 0x69: 134, 0x6A: 66,  0x6B: 41,  0x6C: 23,
+    0x6D: 46,  0x6E: 61,  0x6F: 62,  0x70: 13,  0x71: 14,
+    0x72: 15,  0x74: 85,  0x75: 57,  0x76: 51,  0x77: 49,
+    0x78: 87,  0x7B: 10,  0x7C: 11,  0x7D: 12,  0x7E: 68,
+    0x80: 55,  0x81: 97,  0x82: 42,  0x83: 150, 0x84: 143,
+    0x85: 129, 0x88: 89,  0x8A: 99,  0x8B: 91,  0x8D: 101,
+    0x8E: 36,  0x8F: 110, 0x90: 53,  0x91: 105, 0x93: 93,
+    0x94: 63,  0x95: 65,  0x96: 17,  0x97: 18,  0x98: 121,
+    0x99: 1,   0x9A: 3,   0x9B: 73,  0x9D: 118, 0x9E: 119,
+    0xA3: 77,  0xA4: 78,  0xA5: 19,  0xA6: 20,  0xA7: 33,
+    0xA8: 30,  0xA9: 74,  0xAA: 137, 0xAB: 142, 0xAD: 81,
     0xB0: 4,   0xB1: 7,   0xB2: 5,   0xB3: 8,   0xB4: 6,
-    0xB9: 43,  0xBA: 44,  0xBB: 45,
+    0xB9: 43,  0xBA: 44,  0xBB: 45,  0xBC: 69,  0xBD: 70,
+    0xBE: 71,
 }
 
 POKEDEX_TO_INTERNAL = {v: k for k, v in INTERNAL_TO_POKEDEX.items()}
@@ -486,47 +528,291 @@ MOVES = {
 # ============================================================
 
 MAP_NAMES = {
-    0: "Pallet Town", 1: "Viridian City", 2: "Pewter City",
-    3: "Cerulean City", 4: "Lavender Town", 5: "Vermilion City",
-    6: "Celadon City", 7: "Fuchsia City", 8: "Cinnabar Island",
-    9: "Indigo Plateau", 10: "Saffron City",
-    12: "Route 1", 13: "Route 2", 14: "Route 3", 15: "Route 4",
-    16: "Route 5", 17: "Route 6", 18: "Route 7", 19: "Route 8",
-    20: "Route 9", 21: "Route 10", 22: "Route 11", 23: "Route 12",
-    24: "Route 13", 25: "Route 14", 26: "Route 15", 27: "Route 16",
-    28: "Route 17", 29: "Route 18", 30: "Route 19", 31: "Route 20",
-    32: "Route 21", 33: "Route 22", 34: "Route 23", 35: "Route 24",
-    36: "Route 25",
-    37: "Player House 1F", 38: "Player House 2F",
-    39: "Rival House", 40: "Oak's Lab",
-    41: "Viridian Pokemon Center", 42: "Viridian Mart",
-    45: "Viridian Gym",
-    49: "Pewter Gym", 52: "Pewter Pokemon Center",
-    57: "Cerulean Pokemon Center", 58: "Cerulean Gym",
-    66: "Lavender Pokemon Center",
-    67: "Pokemon Tower 1F", 68: "Pokemon Tower 2F",
-    69: "Pokemon Tower 3F", 70: "Pokemon Tower 4F",
-    71: "Pokemon Tower 5F", 72: "Pokemon Tower 6F",
-    73: "Pokemon Tower 7F",
-    77: "Vermilion Pokemon Center", 80: "Vermilion Gym",
-    82: "SS Anne 1F",
-    96: "Celadon Pokemon Center", 97: "Celadon Gym",
-    98: "Game Corner",
-    105: "Fuchsia Pokemon Center", 108: "Fuchsia Gym",
-    112: "Cinnabar Pokemon Center", 113: "Cinnabar Gym",
-    119: "Indigo Plateau Lobby",
-    121: "Saffron Pokemon Center", 134: "Saffron Gym",
-    136: "Fighting Dojo",
-    142: "Mt. Moon 1F", 143: "Mt. Moon B1F", 144: "Mt. Moon B2F",
-    159: "Rock Tunnel 1F", 160: "Rock Tunnel B1F",
-    170: "Pokemon Mansion 1F",
-    174: "Safari Zone Entrance",
-    192: "Victory Road 1F", 193: "Victory Road 2F", 194: "Victory Road 3F",
-    195: "Lorelei Room", 196: "Bruno Room",
-    197: "Agatha Room", 198: "Lance Room", 199: "Hall of Fame",
-    202: "Viridian Forest", 203: "Diglett's Cave",
-    208: "Power Plant",
-    228: "Cerulean Cave 1F", 229: "Cerulean Cave 2F",
+    # Cities and Towns
+    0: "Pallet Town",          # $00
+    1: "Viridian City",        # $01
+    2: "Pewter City",          # $02
+    3: "Cerulean City",        # $03
+    4: "Lavender Town",        # $04
+    5: "Vermilion City",       # $05
+    6: "Celadon City",         # $06
+    7: "Fuchsia City",         # $07
+    8: "Cinnabar Island",      # $08
+    9: "Indigo Plateau",       # $09
+    10: "Saffron City",        # $0A
+    # Routes
+    12: "Route 1",             # $0C
+    13: "Route 2",             # $0D
+    14: "Route 3",             # $0E
+    15: "Route 4",             # $0F
+    16: "Route 5",             # $10
+    17: "Route 6",             # $11
+    18: "Route 7",             # $12
+    19: "Route 8",             # $13
+    20: "Route 9",             # $14
+    21: "Route 10",            # $15
+    22: "Route 11",            # $16
+    23: "Route 12",            # $17
+    24: "Route 13",            # $18
+    25: "Route 14",            # $19
+    26: "Route 15",            # $1A
+    27: "Route 16",            # $1B
+    28: "Route 17",            # $1C
+    29: "Route 18",            # $1D
+    30: "Route 19",            # $1E
+    31: "Route 20",            # $1F
+    32: "Route 21",            # $20
+    33: "Route 22",            # $21
+    34: "Route 23",            # $22
+    35: "Route 24",            # $23
+    36: "Route 25",            # $24
+    # Pallet Town buildings
+    37: "Player House 1F",     # $25 REDS_HOUSE_1F
+    38: "Player House 2F",     # $26 REDS_HOUSE_2F
+    39: "Rival House",         # $27 BLUES_HOUSE
+    40: "Oak's Lab",           # $28 OAKS_LAB
+    # Viridian City buildings
+    41: "Viridian Pokemon Center",     # $29
+    42: "Viridian Mart",               # $2A
+    43: "Viridian School",             # $2B
+    44: "Viridian Nickname House",     # $2C
+    45: "Viridian Gym",                # $2D
+    # Route 2 area
+    46: "Diglett's Cave (Route 2)",    # $2E
+    47: "Viridian Forest North Gate",  # $2F
+    48: "Route 2 Trade House",         # $30
+    49: "Route 2 Gate",                # $31
+    50: "Viridian Forest South Gate",  # $32
+    51: "Viridian Forest",             # $33
+    # Pewter City buildings
+    52: "Pewter Museum 1F",            # $34
+    53: "Pewter Museum 2F",            # $35
+    54: "Pewter Gym",                  # $36
+    55: "Pewter Nidoran House",        # $37
+    56: "Pewter Mart",                 # $38
+    57: "Pewter Speech House",         # $39
+    58: "Pewter Pokemon Center",       # $3A
+    # Mt. Moon
+    59: "Mt. Moon 1F",                 # $3B
+    60: "Mt. Moon B1F",                # $3C
+    61: "Mt. Moon B2F",                # $3D
+    # Cerulean City buildings
+    62: "Cerulean Trashed House",      # $3E
+    63: "Cerulean Melanie's House",    # $3F
+    64: "Cerulean Pokemon Center",     # $40
+    65: "Cerulean Gym",                # $41
+    66: "Bike Shop",                   # $42
+    67: "Cerulean Mart",               # $43
+    68: "Mt. Moon Pokemon Center",     # $44
+    69: "Cerulean Trashed House Copy", # $45
+    # Route 5-8 area
+    70: "Route 5 Gate",                # $46
+    71: "Underground Path (Route 5)",  # $47
+    72: "Day Care",                    # $48
+    73: "Route 6 Gate",                # $49
+    74: "Underground Path (Route 6)",  # $4A
+    75: "Underground Path (Route 6) Copy", # $4B
+    76: "Route 7 Gate",                # $4C
+    77: "Underground Path (Route 7)",  # $4D
+    78: "Underground Path (Route 7) Copy", # $4E
+    79: "Route 8 Gate",                # $4F
+    80: "Underground Path (Route 8)",  # $50
+    # Rock Tunnel area
+    81: "Rock Tunnel Pokemon Center",  # $51
+    82: "Rock Tunnel 1F",             # $52
+    # Power Plant
+    83: "Power Plant",                 # $53
+    # Route 11-12 area
+    84: "Route 11 Gate 1F",            # $54
+    85: "Diglett's Cave (Route 11)",   # $55
+    86: "Route 11 Gate 2F",            # $56
+    87: "Route 12 Gate 1F",            # $57
+    # Bill's House
+    88: "Bill's House",                # $58
+    # Vermilion City buildings
+    89: "Vermilion Pokemon Center",    # $59
+    90: "Pokemon Fan Club",            # $5A
+    91: "Vermilion Mart",              # $5B
+    92: "Vermilion Gym",               # $5C
+    93: "Vermilion Pidgey House",      # $5D
+    94: "Vermilion Dock",              # $5E
+    # SS Anne
+    95: "SS Anne 1F",                  # $5F
+    96: "SS Anne 2F",                  # $60
+    97: "SS Anne 3F",                  # $61
+    98: "SS Anne B1F",                 # $62
+    99: "SS Anne Bow",                 # $63
+    100: "SS Anne Kitchen",            # $64
+    101: "SS Anne Captain's Room",     # $65
+    102: "SS Anne 1F Rooms",           # $66
+    103: "SS Anne 2F Rooms",           # $67
+    104: "SS Anne B1F Rooms",          # $68
+    # Victory Road / Pokemon League
+    108: "Victory Road 1F",            # $6C
+    113: "Lance's Room",               # $71
+    118: "Hall of Fame",               # $76
+    # Underground Paths
+    119: "Underground Path (N-S)",     # $77
+    120: "Champion's Room",            # $78
+    121: "Underground Path (W-E)",     # $79
+    # Celadon City buildings
+    122: "Celadon Mart 1F",            # $7A
+    123: "Celadon Mart 2F",            # $7B
+    124: "Celadon Mart 3F",            # $7C
+    125: "Celadon Mart 4F",            # $7D
+    126: "Celadon Mart Roof",          # $7E
+    127: "Celadon Mart Elevator",      # $7F
+    128: "Celadon Mansion 1F",         # $80
+    129: "Celadon Mansion 2F",         # $81
+    130: "Celadon Mansion 3F",         # $82
+    131: "Celadon Mansion Roof",       # $83
+    132: "Celadon Mansion Roof House", # $84
+    133: "Celadon Pokemon Center",     # $85
+    134: "Celadon Gym",                # $86
+    135: "Game Corner",                # $87
+    136: "Celadon Mart 5F",            # $88
+    137: "Game Corner Prize Room",     # $89
+    138: "Celadon Diner",              # $8A
+    139: "Celadon Chief House",        # $8B
+    140: "Celadon Hotel",              # $8C
+    # Lavender Town buildings
+    141: "Lavender Pokemon Center",    # $8D
+    142: "Pokemon Tower 1F",           # $8E
+    143: "Pokemon Tower 2F",           # $8F
+    144: "Pokemon Tower 3F",           # $90
+    145: "Pokemon Tower 4F",           # $91
+    146: "Pokemon Tower 5F",           # $92
+    147: "Pokemon Tower 6F",           # $93
+    148: "Pokemon Tower 7F",           # $94
+    149: "Mr. Fuji's House",           # $95
+    150: "Lavender Mart",              # $96
+    151: "Lavender Cubone House",      # $97
+    # Fuchsia City buildings
+    152: "Fuchsia Mart",               # $98
+    153: "Fuchsia Bill's Grandpa House", # $99
+    154: "Fuchsia Pokemon Center",     # $9A
+    155: "Warden's House",             # $9B
+    156: "Safari Zone Gate",           # $9C
+    157: "Fuchsia Gym",                # $9D
+    158: "Fuchsia Meeting Room",       # $9E
+    # Seafoam Islands
+    159: "Seafoam Islands B1F",        # $9F
+    160: "Seafoam Islands B2F",        # $A0
+    161: "Seafoam Islands B3F",        # $A1
+    162: "Seafoam Islands B4F",        # $A2
+    # Vermilion extras
+    163: "Vermilion Old Rod House",    # $A3
+    164: "Fuchsia Good Rod House",     # $A4
+    # Pokemon Mansion / Cinnabar
+    165: "Pokemon Mansion 1F",         # $A5
+    166: "Cinnabar Gym",               # $A6
+    167: "Cinnabar Lab",               # $A7
+    168: "Cinnabar Lab Trade Room",    # $A8
+    169: "Cinnabar Lab Metronome Room", # $A9
+    170: "Cinnabar Lab Fossil Room",   # $AA
+    171: "Cinnabar Pokemon Center",    # $AB
+    172: "Cinnabar Mart",              # $AC
+    173: "Cinnabar Mart Copy",         # $AD
+    # Indigo Plateau
+    174: "Indigo Plateau Lobby",       # $AE
+    # Saffron City buildings
+    175: "Copycat's House 1F",         # $AF
+    176: "Copycat's House 2F",         # $B0
+    177: "Fighting Dojo",              # $B1
+    178: "Saffron Gym",                # $B2
+    179: "Saffron Pidgey House",       # $B3
+    180: "Saffron Mart",               # $B4
+    181: "Silph Co. 1F",               # $B5
+    182: "Saffron Pokemon Center",     # $B6
+    183: "Mr. Psychic's House",        # $B7
+    # Route gates
+    184: "Route 15 Gate 1F",           # $B8
+    185: "Route 15 Gate 2F",           # $B9
+    186: "Route 16 Gate 1F",           # $BA
+    187: "Route 16 Gate 2F",           # $BB
+    188: "Route 16 Fly House",         # $BC
+    189: "Route 12 Super Rod House",   # $BD
+    190: "Route 18 Gate 1F",           # $BE
+    191: "Route 18 Gate 2F",           # $BF
+    # More dungeons
+    192: "Seafoam Islands 1F",         # $C0
+    193: "Route 22 Gate",              # $C1
+    194: "Victory Road 2F",            # $C2
+    195: "Route 12 Gate 2F",           # $C3
+    196: "Vermilion Trade House",      # $C4
+    197: "Diglett's Cave",             # $C5
+    198: "Victory Road 3F",            # $C6
+    # Rocket Hideout
+    199: "Rocket Hideout B1F",         # $C7
+    200: "Rocket Hideout B2F",         # $C8
+    201: "Rocket Hideout B3F",         # $C9
+    202: "Rocket Hideout B4F",         # $CA
+    203: "Rocket Hideout Elevator",    # $CB
+    # Silph Co.
+    207: "Silph Co. 2F",               # $CF
+    208: "Silph Co. 3F",               # $D0
+    209: "Silph Co. 4F",               # $D1
+    210: "Silph Co. 5F",               # $D2
+    211: "Silph Co. 6F",               # $D3
+    212: "Silph Co. 7F",               # $D4
+    213: "Silph Co. 8F",               # $D5
+    # Pokemon Mansion upper floors
+    214: "Pokemon Mansion 2F",         # $D6
+    215: "Pokemon Mansion 3F",         # $D7
+    216: "Pokemon Mansion B1F",        # $D8
+    # Safari Zone
+    217: "Safari Zone East",           # $D9
+    218: "Safari Zone North",          # $DA
+    219: "Safari Zone West",           # $DB
+    220: "Safari Zone Center",         # $DC
+    221: "Safari Zone Center Rest House", # $DD
+    222: "Safari Zone Secret House",   # $DE
+    223: "Safari Zone West Rest House", # $DF
+    224: "Safari Zone East Rest House", # $E0
+    225: "Safari Zone North Rest House", # $E1
+    # Cerulean Cave
+    226: "Cerulean Cave 2F",           # $E2
+    227: "Cerulean Cave B1F",          # $E3
+    228: "Cerulean Cave 1F",           # $E4
+    # Misc
+    229: "Name Rater's House",         # $E5
+    230: "Cerulean Badge House",       # $E6
+    232: "Rock Tunnel B1F",            # $E8
+    # Silph Co. upper floors
+    233: "Silph Co. 9F",               # $E9
+    234: "Silph Co. 10F",              # $EA
+    235: "Silph Co. 11F",              # $EB
+    236: "Silph Co. Elevator",         # $EC
+    # Link areas
+    239: "Trade Center",               # $EF
+    240: "Colosseum",                  # $F0
+    # Elite Four
+    245: "Lorelei's Room",             # $F5
+    246: "Bruno's Room",               # $F6
+    247: "Agatha's Room",              # $F7
+    # Yellow-specific
+    248: "Summer Beach House",         # $F8
+}
+
+# Tileset names (for tile-pair collision lookup)
+TILESET_NAMES = {
+    0x00: "OVERWORLD",
+    0x01: "REDS_HOUSE_1",
+    0x02: "MART",
+    0x03: "FOREST",
+    0x05: "REDS_HOUSE_2",
+    0x07: "GYM",
+    0x08: "HOUSE",
+    0x09: "CAVERN",
+    0x0E: "UNDERGROUND",
+    0x11: "GATE",
+    0x12: "SHIP",
+    0x14: "LOBBY",
+    0x15: "MANSION",
+    0x16: "SHIP_PORT",
+    0x17: "CEMETERY",
+    0x18: "INTERIOR",
+    0x1D: "PLATEAU",
 }
 
 

@@ -261,7 +261,10 @@ class GameState:
     # Progress
     badges: int = 0
     badge_count: int = 0
+    badge_names: list[str] = field(default_factory=list)
     money: int = 0
+    game_progress: str = ""  # Human-readable story progress phase
+    event_flags: dict[str, bool] = field(default_factory=dict)
 
     # UI
     menu_cursor: int = 0
@@ -303,6 +306,10 @@ class GameState:
             f"Map: {self.map_name} ({self.map_id}) | Pos: ({self.player_x}, {self.player_y})",
             f"Party: {self.party_count} ({self.alive_party_count} alive) | Badges: {self.badge_count} | Money: ${self.money}",
         ]
+        if self.game_progress:
+            lines.append(f"Progress: {self.game_progress}")
+        if self.badge_names:
+            lines.append(f"Badges: {', '.join(self.badge_names)}")
         if self.party:
             lead = self.party[0]
             lines.append(
@@ -413,6 +420,65 @@ class GameStateReader:
         for b in vals:
             result = result * 100 + ((b >> 4) * 10) + (b & 0x0F)
         return result
+
+    async def read_event_flags(self) -> dict[str, bool]:
+        """Read early game event flags from memory.
+
+        Each flag is a single bit in the event flags bitfield.
+        Flag N is at byte WRAM_EVENT_FLAGS + (N // 8), bit (N % 8).
+
+        Returns:
+            Dict mapping flag name -> bool (set or not)
+        """
+        flags = {}
+        # Read enough bytes to cover all flags we care about
+        # Max flag number is 0x34 = 52, so we need 52//8 + 1 = 7 bytes
+        flag_data = await self._read(mem.WRAM_EVENT_FLAGS, 8)
+
+        for name, flag_num in mem.EVENT_FLAGS.items():
+            byte_idx = flag_num // 8
+            bit_idx = flag_num % 8
+            if byte_idx < len(flag_data):
+                flags[name] = bool(flag_data[byte_idx] & (1 << bit_idx))
+            else:
+                flags[name] = False
+
+        return flags
+
+    async def read_game_progress(self) -> str:
+        """Determine current game progress phase from event flags.
+
+        Checks flags in reverse order (most progressed first) and returns
+        a human-readable description of the current story phase.
+
+        Returns:
+            String like "GOT_POKEDEX - Explore freely with Pokedex"
+        """
+        flags = await self.read_event_flags()
+
+        for flag_name, description in mem.GAME_PROGRESS_ORDER:
+            if flags.get(flag_name, False):
+                return f"{flag_name} - {description}"
+
+        return "VERY_START - Beginning of game"
+
+    def _read_badge_names(self, badge_byte: int) -> list[str]:
+        """Convert badge bitfield to list of badge names."""
+        names = []
+        badge_list = [
+            (mem.BADGE_BOULDER, "Boulder"),
+            (mem.BADGE_CASCADE, "Cascade"),
+            (mem.BADGE_THUNDER, "Thunder"),
+            (mem.BADGE_RAINBOW, "Rainbow"),
+            (mem.BADGE_SOUL, "Soul"),
+            (mem.BADGE_MARSH, "Marsh"),
+            (mem.BADGE_VOLCANO, "Volcano"),
+            (mem.BADGE_EARTH, "Earth"),
+        ]
+        for bit, name in badge_list:
+            if badge_byte & (1 << bit):
+                names.append(name)
+        return names
 
     async def _read_screen_text(self) -> ScreenText:
         """Read text from screen tile map (20x18 tiles)."""
@@ -790,6 +856,14 @@ class GameStateReader:
             mon = await self._read_pokemon(mem.PARTY_MON_ADDRESSES[i])
             party.append(mon)
 
+        # Read game progress (only in actual gameplay, not title/intro)
+        game_progress = ""
+        event_flags = {}
+        badge_names = self._read_badge_names(badges)
+        if map_id > 0 or party_count > 0:
+            game_progress = await self.read_game_progress()
+            event_flags = await self.read_event_flags()
+
         # Read battle state if in battle
         battle = None
         if mode == GameMode.BATTLE:
@@ -851,7 +925,10 @@ class GameStateReader:
             battle=battle,
             badges=badges,
             badge_count=bin(badges).count("1"),
+            badge_names=badge_names,
             money=money,
+            game_progress=game_progress,
+            event_flags=event_flags,
             menu_cursor=menu_cursor,
             menu_max=menu_max,
             text_active=(text_box_id != 0 or ignore_input > 0),

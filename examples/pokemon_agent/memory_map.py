@@ -332,6 +332,40 @@ WRAM_PLAY_TIME_SECONDS = 0xDA43
 WRAM_PLAY_TIME_FRAMES = 0xDA44
 WRAM_OPTIONS = 0xD354            # Game options (text speed etc.)
 WRAM_NO_BATTLE_STEPS = 0xD13B    # Steps without random battles
+
+# ============================================================
+# Event Flags
+# ============================================================
+
+WRAM_EVENT_FLAGS = 0xD747  # Base address for event flags bitfield
+
+# Early game event flag bit numbers
+# Flag N is at byte WRAM_EVENT_FLAGS + (N // 8), bit (N % 8)
+EVENT_FLAGS = {
+    "FOLLOWED_OAK_INTO_LAB": 0x00,
+    "PALLET_AFTER_GETTING_POKEBALLS": 0x06,
+    "GOT_TOWN_MAP": 0x18,
+    "OAK_ASKED_TO_CHOOSE_MON": 0x21,
+    "GOT_STARTER": 0x22,
+    "BATTLED_RIVAL_IN_OAKS_LAB": 0x23,
+    "GOT_POKEBALLS_FROM_OAK": 0x24,
+    "GOT_POKEDEX": 0x25,
+    "OAK_APPEARED_IN_PALLET": 0x27,
+    "OAK_GOT_PARCEL": 0x33,
+    "GOT_OAKS_PARCEL": 0x34,
+}
+
+# Game progress phases (checked in reverse order - most progressed first)
+GAME_PROGRESS_ORDER = [
+    ("GOT_POKEDEX", "Explore freely with Pokedex"),
+    ("GOT_OAKS_PARCEL", "Deliver parcel to Oak"),
+    ("BATTLED_RIVAL_IN_OAKS_LAB", "Leave Oak's Lab"),
+    ("GOT_STARTER", "Battle rival in Oak's Lab"),
+    ("OAK_ASKED_TO_CHOOSE_MON", "Choose starter Pokemon"),
+    ("FOLLOWED_OAK_INTO_LAB", "Follow Oak into lab"),
+    ("OAK_APPEARED_IN_PALLET", "Oak is escorting to lab"),
+]
+
 WRAM_TILE_MAP = 0xC3A0           # Current tile map (20x18 = 360 bytes)
 
 HRAM_RANDOM_ADD = 0xFFD3         # Random number (additive)

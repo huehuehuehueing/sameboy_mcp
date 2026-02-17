@@ -52,6 +52,7 @@ from examples.pokemon_agent.routines import Routines
 from examples.pokemon_agent.strategy import StrategyEngine
 from examples.pokemon_agent.llm_agent import LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT
 from examples.pokemon_agent.area_analyzer import AreaAnalyzer, AreaData
+from examples.pokemon_agent.cost_tracker import CostTracker
 
 
 class PokemonAgent:
@@ -64,6 +65,9 @@ class PokemonAgent:
         self._session_ctx = None
         self._step_count = 0
         self._start_time = 0.0
+
+        # Cost tracking (shared across all LLM components)
+        self._cost_tracker = CostTracker()
 
         # Initialized after MCP connect
         self._state_reader: GameStateReader | None = None
@@ -147,7 +151,8 @@ class PokemonAgent:
         self._strategy = StrategyEngine(self.config, self._analyzer)
 
         # Initialize LLM tool agent for MCP-based decisions
-        self._llm_agent = LLMToolAgent(self.config, self.call_tool)
+        self._llm_agent = LLMToolAgent(self.config, self.call_tool,
+                                       cost_tracker=self._cost_tracker)
 
         # Initialize area analyzer for map change detection
         self._area_analyzer = AreaAnalyzer(self.config, self.call_tool)
@@ -644,14 +649,24 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                             state.map_id, state.player_x, state.player_y
                         )
 
+                    # Build stuck warning if position hasn't changed
+                    stuck_warning = ""
+                    if self._stuck_counter >= 3:
+                        stuck_warning = (
+                            f"\n\n*** STUCK at ({state.player_x},{state.player_y}) "
+                            f"for {self._stuck_counter} turns. Try a DIFFERENT direction "
+                            f"to navigate around the obstacle. ***"
+                        )
+
                     strategy_context = f"""Overworld state:
 Map: {state.map_name} (ID: {state.map_id})
 Position: ({state.player_x}, {state.player_y})
 Party size: {state.party_count}
 Badges: {state.badge_count}/8
+Progress: {state.game_progress}
 
 Area Analysis:
-{area_context}
+{area_context}{stuck_warning}
 
 Use tools to analyze the situation, then call report_result with your action."""
 
@@ -828,6 +843,10 @@ Use tools to analyze the situation, then call report_result with your action."""
             print(f"Time: {elapsed:.1f}s")
             print(f"Cache stats: {self._strategy.cache_stats}")
 
+            # Cost tracking
+            print(f"\n--- LLM Cost ---")
+            print(self._cost_tracker.summary())
+
             # Area analysis stats
             if self._area_analyzer:
                 areas = self._area_analyzer.get_all_areas()
@@ -885,6 +904,8 @@ def parse_args():
     agent.add_argument("--cycle-frames", type=int, default=30, help="Frames between decisions")
     agent.add_argument("--no-cache", action="store_true", help="Disable decision caching")
     agent.add_argument("--cache-dir", default=".pokemon_agent_cache")
+    agent.add_argument("--max-history", type=int, default=60,
+                       help="Summarize LLM history after N messages (default: 60)")
     agent.add_argument("-v", "--verbose", action="store_true")
     agent.add_argument("--log-state", action="store_true", help="Print game state each cycle")
 
@@ -937,6 +958,7 @@ async def main():
         screenshot_on_decision=not args.no_vision,
         state_path=args.state,
         save_state_path=args.save_state,
+        max_history=args.max_history,
     )
 
     # Validate

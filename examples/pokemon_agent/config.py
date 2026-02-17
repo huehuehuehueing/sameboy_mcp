@@ -70,6 +70,7 @@ class AgentConfig:
     display_scale: int = 2
     max_steps: int = 0             # 0 = unlimited
     cycle_frames: int = 30         # Frames to run between decisions (~0.5 sec)
+    max_history: int = 60          # Summarize LLM history after this many messages
 
     # Saved state
     state_path: str | None = None       # Load state from this file on startup

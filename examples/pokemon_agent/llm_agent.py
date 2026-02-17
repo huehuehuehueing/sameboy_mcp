@@ -2,6 +2,7 @@
 
 Instead of parsing verbal LLM output, this agent instructs the LLM
 to call MCP tools directly using OpenAI-compatible function calling.
+Includes cost tracking and history summarization.
 """
 
 import json
@@ -13,6 +14,7 @@ except ImportError:
     OpenAI = None
 
 from .config import AgentConfig
+from .cost_tracker import CostTracker
 
 
 # MCP tools exposed to the LLM as OpenAI functions
@@ -110,15 +112,23 @@ MCP_TOOLS = [
 class LLMToolAgent:
     """LLM agent that uses MCP tools via function calling."""
 
-    def __init__(self, config: AgentConfig, call_tool: Callable):
+    def __init__(self, config: AgentConfig, call_tool: Callable,
+                 cost_tracker: CostTracker | None = None):
         """
         Args:
             config: Agent configuration
             call_tool: Async function to call MCP tools: call_tool(name, args) -> result
+            cost_tracker: Optional shared cost tracker instance
         """
         self.config = config
         self._call_tool = call_tool
         self._verbose = config.verbose
+        self.cost_tracker = cost_tracker or CostTracker()
+
+        # History summarization
+        self._max_history = config.max_history
+        self._message_history: list[dict] = []  # Persistent history across calls
+        self._history_summarized = False
 
         # Initialize OpenAI client
         llm_cfg = config.get_llm_config()
@@ -163,6 +173,64 @@ class LLMToolAgent:
         self._log(f"  result: {str(result)[:200]}")
         return result
 
+    async def _summarize_history(self):
+        """Summarize conversation history when it exceeds max_history.
+
+        Replaces the entire history with a single summary message.
+        """
+        if not self._client or len(self._message_history) < self._max_history:
+            return
+
+        self._log(f"summarizing history ({len(self._message_history)} messages)")
+
+        summary_prompt = (
+            "Create a brief summary of our conversation so far. Include:\n"
+            "1. Key game events and milestones reached\n"
+            "2. Important decisions made\n"
+            "3. Current objectives\n"
+            "4. Current location and Pokemon team status\n"
+            "5. Strategies and plans mentioned\n"
+            "Be concise - this will replace the full history."
+        )
+
+        try:
+            summary_messages = list(self._message_history) + [
+                {"role": "user", "content": summary_prompt}
+            ]
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=summary_messages,
+                max_tokens=512,
+                temperature=0.3,
+            )
+
+            # Track summary cost
+            if response.usage:
+                step_cost = self.cost_tracker.track_openai(response.usage, self._model)
+                self._log(f"summary cost: ${step_cost:.6f}")
+
+            summary_text = response.choices[0].message.content or "No summary generated."
+
+            # Replace history with summary
+            self._message_history = [
+                {
+                    "role": "user",
+                    "content": (
+                        f"CONVERSATION HISTORY SUMMARY "
+                        f"(representing {self._max_history} previous messages):\n"
+                        f"{summary_text}\n\n"
+                        "Continue playing based on this context."
+                    ),
+                }
+            ]
+            self._history_summarized = True
+            self._log(f"history summarized to 1 message")
+
+        except Exception as e:
+            self._log(f"summarization failed: {e}")
+            # On failure, just trim the oldest messages
+            self._message_history = self._message_history[-10:]
+
     async def run_with_tools(
         self,
         system_prompt: str,
@@ -184,10 +252,17 @@ class LLMToolAgent:
             self._log("no LLM client, returning default")
             return {"action": "wait", "frames": 60}
 
+        # Check if history needs summarization
+        if len(self._message_history) >= self._max_history:
+            await self._summarize_history()
+
+        # Add current context to persistent history
+        self._message_history.append({"role": "user", "content": user_message})
+
+        # Build messages: system + history
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
+        ] + list(self._message_history)
 
         for turn in range(max_turns):
             self._log(f"turn {turn + 1}/{max_turns}")
@@ -204,6 +279,11 @@ class LLMToolAgent:
             except Exception as e:
                 self._log(f"LLM error: {e}")
                 return {"action": "wait", "frames": 60}
+
+            # Track cost
+            if response.usage:
+                step_cost = self.cost_tracker.track_openai(response.usage, self._model)
+                self._log(f"step cost: ${step_cost:.6f} (total: ${self.cost_tracker.total_cost:.4f})")
 
             choice = response.choices[0]
             message = choice.message
@@ -226,6 +306,10 @@ class LLMToolAgent:
 
                     # If this is the report_result tool, we're done
                     if func_name == "report_result":
+                        # Save assistant response to history
+                        self._message_history.append(
+                            {"role": "assistant", "content": json.dumps(result)}
+                        )
                         return result
 
                     # Add tool result to messages
@@ -238,6 +322,9 @@ class LLMToolAgent:
                 # No tool calls - check if there's content
                 if message.content:
                     self._log(f"LLM response (no tools): {message.content[:200]}")
+                    self._message_history.append(
+                        {"role": "assistant", "content": message.content}
+                    )
                 # No tool calls and no useful response - return default
                 return {"action": "wait", "frames": 60}
 
