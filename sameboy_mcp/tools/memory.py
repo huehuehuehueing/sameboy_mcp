@@ -17,13 +17,13 @@ def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
 
         Args:
             address: Memory address (0x0000-0xFFFF)
-            length: Number of bytes to read (default 1, max 256)
+            length: Number of bytes to read (default 1, max 4096)
 
         Returns:
             Dictionary with hex string of memory contents
         """
-        if length > 256:
-            length = 256
+        if length > 4096:
+            length = 4096
         if length < 1:
             length = 1
 
