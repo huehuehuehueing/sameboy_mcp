@@ -512,22 +512,34 @@ CHAR_ENCODING = {
     0xAF: "p", 0xB0: "q", 0xB1: "r", 0xB2: "s", 0xB3: "t",
     0xB4: "u", 0xB5: "v", 0xB6: "w", 0xB7: "x", 0xB8: "y",
     0xB9: "z",
-    # Accented characters (é commonly used in "Pokémon")
+    # Accented characters and contractions (from pret/pokeyellow charmap.asm)
     0xBA: "é",
+    0xBB: "'d",  # Contraction: "I'd", "you'd"
+    0xBC: "'l",  # Contraction: "I'll", "you'll"
+    0xBD: "'s",  # Contraction: "it's", "that's"
+    0xBE: "'t",  # Contraction: "don't", "can't"
+    0xBF: "'v",  # Contraction: "I've", "you've"
     # Numbers
     0xF6: "0", 0xF7: "1", 0xF8: "2", 0xF9: "3", 0xFA: "4",
     0xFB: "5", 0xFC: "6", 0xFD: "7", 0xFE: "8", 0xFF: "9",
-    # Punctuation and symbols
-    0xE0: "'",  # Apostrophe (used in "It's", etc.)
+    # Punctuation and symbols (corrected per pret/pokeyellow charmap.asm)
+    0xE0: "'",  # Apostrophe
     0xE1: "PK", # PK symbol
     0xE2: "MN", # MN symbol (for "POKéMON")
-    0xE3: "-",  # Dash
-    0xE4: "?",  # Question mark
-    0xE5: "!",  # Exclamation mark
-    0xE6: ".",  # Period
-    0xE7: "/",  # Slash
-    0xE8: ",",  # Comma
+    0xE3: "-",  # Dash/hyphen
+    0xE4: "'r", # Contraction: "Mr."
+    0xE5: "'m", # Contraction: "I'm"
+    0xE6: "?",  # Question mark
+    0xE7: "!",  # Exclamation mark
+    0xE8: ".",  # Period
+    0xEC: "▷",  # Right-pointing triangle
+    0xED: "▶",  # Menu cursor arrow
+    0xEE: "▼",  # Down arrow (more text indicator)
     0xEF: "♂",  # Male symbol
+    0xF0: "¥",  # Yen/money symbol
+    0xF1: "×",  # Multiplication sign
+    0xF3: "/",  # Forward slash
+    0xF4: ",",  # Comma
     0xF5: "♀",  # Female symbol
     0x50: "@",  # String terminator (end of text)
     0x4F: "\n", # Line break
@@ -540,9 +552,9 @@ CHAR_ENCODING = {
     0x10: " ", 0x11: " ", 0x12: " ", 0x13: " ",
 }
 
-# Reverse encoding for writing text
+# Reverse encoding for writing text (single chars only)
 CHAR_TO_TILE = {v: k for k, v in CHAR_ENCODING.items() if len(v) == 1}
-# Ensure uppercase A maps correctly
+# Ensure common characters map to canonical tile IDs
 CHAR_TO_TILE.update({
     "A": 0x80, "B": 0x81, "C": 0x82, "D": 0x83, "E": 0x84,
     "F": 0x85, "G": 0x86, "H": 0x87, "I": 0x88, "J": 0x89,
@@ -550,6 +562,7 @@ CHAR_TO_TILE.update({
     "P": 0x8F, "Q": 0x90, "R": 0x91, "S": 0x92, "T": 0x93,
     "U": 0x94, "V": 0x95, "W": 0x96, "X": 0x97, "Y": 0x98,
     "Z": 0x99, " ": 0x7F, "@": 0x50,
+    "?": 0xE6, "!": 0xE7, ".": 0xE8, ",": 0xF4, "/": 0xF3,
 })
 
 
