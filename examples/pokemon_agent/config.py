@@ -23,7 +23,7 @@ PROVIDERS = {
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-4o-mini",
+        "default_model": "gpt-4.1",
         "supports_vision": True,
     },
     "anthropic": {
