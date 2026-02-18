@@ -694,6 +694,168 @@ hardware memory without catching a case.
 
 ---
 
+## Appendix: Prompt Seed
+
+The following prompt, given to an AI agent with access to the SameBoy MCP
+server tools and a Pokemon Yellow ROM, will reproduce this adventure. The
+server must be started with the Pokemon Yellow MCP plugin
+(`--plugin examples.pokemon_agent.mcp_plugin`) for `decode_screen_text`
+and `render_ascii_map`.
+
+---
+
+<details>
+<summary><strong>Click to expand prompt seed</strong></summary>
+
+```
+You are playing Pokemon Yellow through MCP tools. Your character's name
+is Ashtray. Load the saved state from
+examples/pokemon_agent/saved_states/newgame_pallettown.sav, then execute
+the following adventure sequence. Save a screenshot after each major step.
+
+IMPORTANT RULES:
+- Use decode_screen_text to verify menus/dialog BEFORE pressing buttons.
+- Use render_ascii_map to orient yourself in each new area.
+- After loading a save state or triggering a warp, write 0 to the
+  ignore_input counter at 0xD139 if button presses aren't working.
+- Run at least 40 frames before saving any screenshot.
+- Save all screenshots to docs/screenshots/ with the prefix
+  pokeyellow_adventure_ahh_time_ using the save_screenshot tool at
+  scale 2.
+
+=== ACT I: MAMA'S CRIB ===
+
+You start in Pallet Town at (5,6). Enter Player House 1F through the
+door at (5,5), go upstairs to Player House 2F.
+
+=== ACT II: THE GREAT POTION HEIST ===
+
+Navigate to the PC at (0,1). Interact with it facing up. Select
+WITHDRAW ITEM > POTION > confirm quantity 1 > LOG OFF.
+Screenshot: "withdrew_potion"
+
+=== ACT III: INVENTORY HACK ===
+
+Open the bag with START > ITEM. Read bag memory at 0xD31C (length 20)
+to verify the structure.
+
+Step 1 - 99 Potions:
+  write_memory(0xD31E, 0x63)  -- quantity = 99
+Open bag, verify "POTION x99". Screenshot: "99_potions"
+
+Step 2 - 99 Master Balls:
+  write_memory(0xD31C, 0x02)  -- item count = 2
+  write_memory(0xD31F, 0x01)  -- Master Ball item ID
+  write_memory(0xD320, 0x63)  -- quantity = 99
+  write_memory(0xD321, 0xFF)  -- terminator
+Open bag, verify both items. Screenshot: "master_balls"
+
+=== ACT IV: MONEY AND SQUAD ===
+
+Max money ($999,999 in BCD):
+  write_memory(0xD347, 0x99)
+  write_memory(0xD348, 0x99)
+  write_memory(0xD349, 0x99)
+
+Pokemon injection -- build two party Pokemon from scratch.
+
+Party header (0xD162):
+  write_memory(0xD162, 0x02)  -- party count = 2
+  write_memory(0xD163, 0x15)  -- species 1: Mew
+  write_memory(0xD164, 0x85)  -- species 2: Magikarp
+  write_memory(0xD165, 0xFF)  -- terminator
+
+Mew (44 bytes at 0xD16A):
+  Species=0x15, HP=404, Level=100, Types=Psychic/Psychic (0x18/0x18)
+  Moves: Psychic(0x5E), Thunderbolt(0x55), Ice Beam(0x3A), Earthquake(0x59)
+  All stats=299, max EVs (0xFFFF each), max IVs (0xFFFF).
+  Compute stats using Gen 1 formula:
+    Stat = floor(((Base + IV + floor(sqrt(EV)/8)) * Level / 50) + 5)
+    HP   = floor(((Base + IV + floor(sqrt(EV)/8)) * Level / 50) + Level + 10)
+  Mew base stats are all 100. Write the full 44-byte struct.
+
+Magikarp (44 bytes at 0xD196):
+  Species=0x85, HP=242, Level=100, Types=Water/Water (0x15/0x15)
+  Moves: Splash(0x96), Tackle(0x21)
+  Compute stats with Magikarp base stats (HP:20, Atk:10, Def:55,
+  Spd:80, Spc:20), max EVs/IVs. Write the full 44-byte struct.
+
+OT names -- Gen 1 encoding: A=0x80, S=0x92, H=0x87, terminator=0x50
+  Mon1 OT at 0xD272: write "ASH" + 0x50 (4 bytes)
+  Mon2 OT at 0xD27D: write "ASH" + 0x50 (4 bytes)
+
+Nicknames -- Gen 1 encoding:
+  M=0x8C, E=0x84, W=0x96
+  Mon1 nick at 0xD2B4: write "MEW" + 0x50
+  A=0x80, G=0x86, I=0x88, K=0x8A, R=0x91, P=0x8F
+  Mon2 nick at 0xD2BF: write "MAGIKARP" + 0x50
+
+Open the party menu, take screenshots of the party list, Mew's stats
+page, and Magikarp's stats page.
+Screenshots: "hacked_party", "mew_stats", "magikarp_stats"
+
+=== ACT V: WARP HACK TO POKEMON CENTER ===
+
+Go downstairs to Player House 1F. The door warp table in WRAM:
+  0xD3AD = warp count
+  0xD3AE = warp entries (4 bytes each: Y, X, warp_id, dest_map)
+
+Read the warp table. Find the door warp entries and overwrite their
+dest_map bytes to 58 (Pewter Pokemon Center). There are typically 2
+door warps -- overwrite BOTH dest_map bytes.
+
+Walk down through the door. You will warp to the Pokemon Center.
+Clear ignore_input (write 0 to 0xD139) if movement is blocked.
+Screenshot: "pokecenter_arrival"
+
+=== ACT VI: NURSE JOY ===
+
+Use render_ascii_map to survey the Pokemon Center. Navigate to the
+tile directly below the counter where Nurse Joy stands. Face up and
+press A to talk to her.
+
+Advance through her greeting: "Welcome to our POKeMON CENTER!"
+Screenshot: "nurse_joy"
+
+=== ACT VII: TEXT INJECTION ===
+
+The WRAM tile map is at 0xC3A0 (20 columns x 18 rows). The text box
+occupies rows 12-17. Text lines are at:
+  Row 14, col 1 = 0xC4B9 (line 1)
+  Row 16, col 1 = 0xC4E1 (line 2)
+
+Gen 1 character encoding for injection:
+  A=0x80 B=0x81 C=0x82 D=0x83 E=0x84 F=0x85 G=0x86 H=0x87
+  I=0x88 J=0x89 K=0x8A L=0x8B M=0x8C N=0x8D O=0x8E P=0x8F
+  Q=0x90 R=0x91 S=0x92 T=0x93 U=0x94 V=0x95 W=0x96 X=0x97
+  Y=0x98 Z=0x99  Space=0x7F  ▼=0xEE
+
+Injection #1 -- after Joy's "Welcome" text appears, run 10 frames only,
+then write directly to the tile map:
+  Line 1 at 0xC4B9: "DONT BE A MENACE" + spaces to fill 18 chars
+  Line 2 at 0xC4E1: "WHILE DRINKIN OJ" + space + 0xEE(▼)
+Verify with decode_screen_text. Screenshot: "OJ"
+
+Press A to advance Joy's dialog to the next text box. Run 10 frames,
+then inject:
+  Line 1 at 0xC4B9: "IM JUST TRYNA" + spaces to fill 18 chars
+  Line 2 at 0xC4E1: "FIND MY DADDY" + spaces + 0xEE(▼)
+Verify with decode_screen_text. Screenshot: "2"
+
+=== ACT VIII: GOING HOME ===
+
+Advance through the rest of Joy's dialog. Read the Pokemon Center's
+warp table. Find the exit door warp entries and overwrite their
+dest_map bytes to 0 (Pallet Town) with warp_id 0.
+
+Walk down through the exit doors. You will warp to Pallet Town,
+standing outside mama's front door. Verify with render_ascii_map.
+```
+
+</details>
+
+---
+
 *Built for COSC 69.16 at Dartmouth College, Winter 2026.*
 *Powered by SameBoy, the Model Context Protocol, and sheer audacity.*
 *No Magikarp were harmed in the making of this adventure. He knew what he signed up for.*
