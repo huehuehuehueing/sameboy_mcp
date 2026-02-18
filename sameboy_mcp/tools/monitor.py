@@ -2,21 +2,24 @@
 # SPDX-License-Identifier: MIT
 """Memory monitoring MCP tools."""
 
+from typing import Union
+
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import parse_address
 
 
 def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register memory monitoring tools with the MCP server."""
 
     @server.tool()
-    async def monitor_memory(addresses: list[int]) -> dict:
+    async def monitor_memory(addresses: list[Union[int, str]]) -> dict:
         """
         Start monitoring memory addresses for changes.
 
         Args:
-            addresses: List of addresses to monitor (max 256)
+            addresses: List of addresses to monitor (max 256). Each can be int or hex string.
 
         Returns:
             Confirmation message
@@ -25,7 +28,7 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
             addresses = addresses[:256]
 
         # Normalize addresses
-        addresses = [addr & 0xFFFF for addr in addresses]
+        addresses = [parse_address(addr) for addr in addresses]
 
         result = emu_thread.send_command(CommandType.ADD_MONITORS, {
             "addresses": addresses
@@ -41,18 +44,18 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         }
 
     @server.tool()
-    async def stop_monitor(addresses: list[int] | None = None) -> dict:
+    async def stop_monitor(addresses: list[Union[int, str]] | None = None) -> dict:
         """
         Stop monitoring memory addresses.
 
         Args:
-            addresses: Addresses to stop monitoring (None for all)
+            addresses: Addresses to stop monitoring (None for all). Each can be int or hex string.
 
         Returns:
             Confirmation message
         """
         if addresses is not None:
-            addresses = [addr & 0xFFFF for addr in addresses]
+            addresses = [parse_address(addr) for addr in addresses]
 
         result = emu_thread.send_command(CommandType.REMOVE_MONITORS, {
             "addresses": addresses
@@ -162,38 +165,38 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         matches = []
 
         if region == "ram":
-            # Search WRAM (0xC000-0xDFFF)
             start, end = 0xC000, 0xE000
         elif region == "hram":
-            # Search HRAM (0xFF80-0xFFFE)
             start, end = 0xFF80, 0xFFFF
         elif region == "all":
-            # Full address space (slow!)
             start, end = 0x0000, 0x10000
         else:
             start, end = 0xC000, 0xE000
 
-        # Read memory in chunks
-        for addr in range(start, end - size + 1):
+        # Read in bulk chunks of 4096 bytes for speed
+        chunk_size = 4096
+        for chunk_start in range(start, end, chunk_size):
+            chunk_len = min(chunk_size, end - chunk_start)
             result = emu_thread.send_command(CommandType.READ_MEMORY_RANGE, {
-                "start": addr,
-                "length": size
+                "start": chunk_start,
+                "length": chunk_len
             })
 
             if result.get("error"):
                 continue
 
             data = result.get("data", b"")
-            if len(data) != size:
+            if not data:
                 continue
 
-            # Convert bytes to int (little-endian)
-            found_value = int.from_bytes(data, byteorder="little")
+            # Scan chunk for value
+            for i in range(len(data) - size + 1):
+                found_value = int.from_bytes(data[i:i + size], byteorder="little")
+                if found_value == value:
+                    matches.append(chunk_start + i)
+                    if len(matches) >= 100:
+                        break
 
-            if found_value == value:
-                matches.append(addr)
-
-            # Limit results
             if len(matches) >= 100:
                 break
 

@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: MIT
 """CPU-related MCP tools."""
 
+from typing import Union
+
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import parse_address
 
 
 def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -55,12 +58,12 @@ def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         }
 
     @server.tool()
-    async def disassemble(address: int | None = None, count: int = 10) -> dict:
+    async def disassemble(address: Union[int, str, None] = None, count: int = 10) -> dict:
         """
         Disassemble instructions at an address.
 
         Args:
-            address: Starting address (default: current PC)
+            address: Starting address (default: current PC). Accepts int or hex string.
             count: Number of instructions to disassemble (default 10, max 50)
 
         Returns:
@@ -71,8 +74,10 @@ def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         if count < 1:
             count = 1
 
+        addr = parse_address(address) if address is not None else None
+
         result = emu_thread.send_command(CommandType.DISASSEMBLE, {
-            "address": address,
+            "address": addr,
             "count": count
         })
 
@@ -80,7 +85,7 @@ def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
             return {"error": result["error"]}
 
         return {
-            "address": f"0x{address:04X}" if address is not None else "current PC",
+            "address": f"0x{addr:04X}" if addr is not None else "current PC",
             "count": count,
             "disassembly": result.get("disassembly", ""),
         }

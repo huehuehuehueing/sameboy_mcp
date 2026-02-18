@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: MIT
 """ROM disassembly MCP tools."""
 
+from typing import Union
+
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import parse_address
 
 
 def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register disassembly tools with the MCP server."""
 
     @server.tool()
-    async def disassemble_rom(start: int = 0, end: int | None = None, max_instructions: int = 1000) -> dict:
+    async def disassemble_rom(start: Union[int, str] = 0, end: Union[int, str, None] = None, max_instructions: int = 1000) -> dict:
         """
         Disassemble a range of the loaded ROM.
 
@@ -19,8 +22,8 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         game logic, finding functions, and reverse engineering.
 
         Args:
-            start: Starting address (default 0)
-            end: Ending address (default: start + max_instructions * 3 or ROM end)
+            start: Starting address (default 0). Accepts int or hex string.
+            end: Ending address (default: start + max_instructions * 3 or ROM end). Accepts int or hex string.
             max_instructions: Maximum instructions to disassemble (default 1000, max 10000)
 
         Returns:
@@ -31,9 +34,12 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         if max_instructions < 1:
             max_instructions = 1
 
+        start_addr = parse_address(start) if isinstance(start, str) else start
+        end_addr = parse_address(end) if isinstance(end, str) else end
+
         result = emu_thread.send_command(CommandType.DISASSEMBLE_ROM, {
-            "start": start,
-            "end": end,
+            "start": start_addr,
+            "end": end_addr,
             "max_instructions": max_instructions
         })
 
@@ -43,7 +49,7 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         return result
 
     @server.tool()
-    async def disassemble_function(address: int, max_size: int = 256) -> dict:
+    async def disassemble_function(address: Union[int, str], max_size: int = 256) -> dict:
         """
         Disassemble a function starting at the given address.
 
@@ -51,7 +57,7 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         or unconditional jump is encountered.
 
         Args:
-            address: Starting address of the function
+            address: Starting address of the function. Accepts int or hex string.
             max_size: Maximum bytes to disassemble (default 256, max 4096)
 
         Returns:
@@ -62,8 +68,9 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         if max_size < 1:
             max_size = 1
 
+        addr = parse_address(address)
         result = emu_thread.send_command(CommandType.DISASSEMBLE_FUNCTION, {
-            "address": address,
+            "address": addr,
             "max_size": max_size
         })
 

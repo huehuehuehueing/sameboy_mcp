@@ -2,28 +2,32 @@
 # SPDX-License-Identifier: MIT
 """Debugging MCP tools."""
 
+from typing import Union
+
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import parse_address
 
 
 def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register debugging tools with the MCP server."""
 
     @server.tool()
-    async def set_breakpoint(address: int, enabled: bool = True) -> dict:
+    async def set_breakpoint(address: Union[int, str], enabled: bool = True) -> dict:
         """
         Set a breakpoint at an address.
 
         Args:
-            address: Memory address for breakpoint (0x0000-0xFFFF)
+            address: Memory address for breakpoint (0x0000-0xFFFF). Accepts int or hex string.
             enabled: Whether breakpoint is active
 
         Returns:
             Confirmation message
         """
+        addr = parse_address(address)
         result = emu_thread.send_command(CommandType.SET_BREAKPOINT, {
-            "address": address & 0xFFFF,
+            "address": addr,
             "enabled": enabled
         })
 
@@ -32,23 +36,24 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
 
         return {
             "success": True,
-            "address": f"0x{address:04X}",
+            "address": f"0x{addr:04X}",
             "enabled": enabled,
         }
 
     @server.tool()
-    async def remove_breakpoint(address: int) -> dict:
+    async def remove_breakpoint(address: Union[int, str]) -> dict:
         """
         Remove a breakpoint.
 
         Args:
-            address: Breakpoint address to remove
+            address: Breakpoint address to remove. Accepts int or hex string.
 
         Returns:
             Confirmation message
         """
+        addr = parse_address(address)
         result = emu_thread.send_command(CommandType.REMOVE_BREAKPOINT, {
-            "address": address & 0xFFFF
+            "address": addr
         })
 
         if result.get("error"):
@@ -56,7 +61,7 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
 
         return {
             "success": result.get("success", False),
-            "address": f"0x{address:04X}",
+            "address": f"0x{addr:04X}",
         }
 
     @server.tool()

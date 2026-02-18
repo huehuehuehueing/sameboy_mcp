@@ -2,58 +2,63 @@
 # SPDX-License-Identifier: MIT
 """Memory-related MCP tools."""
 
+from typing import Union
+
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import parse_address
 
 
 def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register memory-related tools with the MCP server."""
 
     @server.tool()
-    async def read_memory(address: int, length: int = 1) -> dict:
+    async def read_memory(address: Union[int, str], length: int = 1) -> dict:
         """
         Read bytes from Game Boy memory.
 
         Args:
-            address: Memory address (0x0000-0xFFFF)
-            length: Number of bytes to read (default 1, max 256)
+            address: Memory address (0x0000-0xFFFF). Accepts int or hex string (e.g. "0xC3A0").
+            length: Number of bytes to read (default 1, max 4096)
 
         Returns:
             Dictionary with hex string of memory contents
         """
-        if length > 256:
-            length = 256
+        addr = parse_address(address)
+        if length > 4096:
+            length = 4096
         if length < 1:
             length = 1
 
         result = emu_thread.send_command(CommandType.READ_MEMORY_RANGE, {
-            "start": address & 0xFFFF,
+            "start": addr,
             "length": length
         })
 
         data = result.get("data", b"")
         return {
-            "address": f"0x{address:04X}",
+            "address": f"0x{addr:04X}",
             "length": len(data),
             "hex": data.hex(),
             "bytes": list(data),
         }
 
     @server.tool()
-    async def write_memory(address: int, value: int) -> dict:
+    async def write_memory(address: Union[int, str], value: int) -> dict:
         """
         Write a byte to Game Boy memory.
 
         Args:
-            address: Memory address (0x0000-0xFFFF)
+            address: Memory address (0x0000-0xFFFF). Accepts int or hex string (e.g. "0xC3A0").
             value: Byte value to write (0x00-0xFF)
 
         Returns:
             Confirmation message
         """
+        addr = parse_address(address)
         result = emu_thread.send_command(CommandType.WRITE_MEMORY, {
-            "address": address & 0xFFFF,
+            "address": addr,
             "value": value & 0xFF
         })
 
@@ -62,7 +67,7 @@ def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
 
         return {
             "success": True,
-            "address": f"0x{address:04X}",
+            "address": f"0x{addr:04X}",
             "value": f"0x{value & 0xFF:02X}",
         }
 
