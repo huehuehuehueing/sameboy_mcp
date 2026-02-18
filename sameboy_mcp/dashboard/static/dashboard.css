@@ -49,6 +49,47 @@
   );
 }
 
+[data-theme="light"] {
+  --bg-deep: #f0f2f5;
+  --bg-panel: #ffffff;
+  --bg-panel-header: #e8ecf0;
+  --bg-input: #ffffff;
+  --border: #d0d7de;
+  --border-bright: #b0bac4;
+  --green: #1a7f37;
+  --green-dim: #1a6e2e;
+  --green-glow: rgba(26, 127, 55, 0.12);
+  --green-bright: #116329;
+  --amber: #9a6700;
+  --red: #cf222e;
+  --blue: #0969da;
+  --cyan: #1a7f37;
+  --purple: #8250df;
+  --orange: #bc4c00;
+  --text: #24292f;
+  --text-dim: #57606a;
+  --text-bright: #1f2328;
+}
+
+[data-theme="light"] .panel::after { opacity: 0.1; }
+
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.theme-toggle:hover {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;

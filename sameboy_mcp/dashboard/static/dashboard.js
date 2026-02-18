@@ -3,6 +3,32 @@
 (() => {
   "use strict";
 
+  // ── Theme toggle ───────────────────────────────
+  function applyTheme(theme) {
+    if (theme === "light") {
+      document.documentElement.setAttribute("data-theme", "light");
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+    const btn = document.getElementById("theme-toggle");
+    if (btn) btn.textContent = theme === "light" ? "\u263E" : "\u2606";
+  }
+
+  const savedTheme = localStorage.getItem("sameboy-dashboard-theme") || "dark";
+  applyTheme(savedTheme);
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("theme-toggle");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        const current = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+        const next = current === "light" ? "dark" : "light";
+        applyTheme(next);
+        localStorage.setItem("sameboy-dashboard-theme", next);
+      });
+    }
+  });
+
   // ── State ───────────────────────────────────────
   let ws = null;
   let reconnectTimer = null;
