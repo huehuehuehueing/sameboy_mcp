@@ -2,9 +2,16 @@
 # SPDX-License-Identifier: MIT
 """Emulation control MCP tools."""
 
+import asyncio
+import sys
+
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+
+# Module-level state for macOS main-thread SDL display
+_macos_display = None
+_macos_pump_task = None
 
 
 def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -275,24 +282,89 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Status of the live display
         """
+        global _macos_display, _macos_pump_task
+
         if scale < 1:
             scale = 1
         if scale > 4:
             scale = 4
 
-        result = emu_thread.send_command(CommandType.ENABLE_LIVE_DISPLAY, {
-            "scale": scale
-        })
+        # On macOS, SDL2 must create windows on the main thread.
+        # The async tool handler runs on the main thread (via asyncio),
+        # so we create the display here instead of in the emulator thread.
+        if sys.platform == "darwin":
+            from ..emulator.display import LiveDisplay, is_available
 
-        if result.get("error"):
-            return {"error": result["error"]}
+            if not is_available():
+                return {"error": "SDL2 (pysdl2) is not available. Install with: pip install pysdl2 pysdl2-dll"}
 
-        return {
-            "success": result.get("success", False),
-            "enabled": result.get("enabled", False),
-            "scale": scale,
-            "message": "Live display window opened. Close the window or call disable_live_display to stop."
-        }
+            if _macos_display and _macos_display.is_running:
+                return {
+                    "success": True,
+                    "enabled": True,
+                    "scale": scale,
+                    "message": "Live display already running."
+                }
+
+            emu = emu_thread.emulator
+            width, height = emu.get_screen_size()
+            title = f"SameBoy MCP - {emu.rom_title}" if emu.rom_title else "SameBoy MCP"
+
+            display = LiveDisplay(width=width, height=height, scale=scale, title=title)
+
+            def on_input(key: str, pressed: bool):
+                try:
+                    emu.set_key(key, pressed)
+                except ValueError:
+                    pass
+
+            display.set_input_callback(on_input)
+
+            if not display.init_window():
+                return {"error": "Failed to create SDL window on macOS"}
+
+            # Wire display to emulator so vblank callback feeds frames
+            emu._live_display = display
+            _macos_display = display
+
+            # Start asyncio task to pump SDL events periodically
+            async def _pump_sdl_events():
+                try:
+                    while _macos_display and _macos_display.is_running:
+                        if not _macos_display.pump_events():
+                            break
+                        await asyncio.sleep(1 / 60)
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    # Clean up if the window was closed by user
+                    if _macos_display:
+                        _macos_display.cleanup()
+                        emu._live_display = None
+
+            _macos_pump_task = asyncio.create_task(_pump_sdl_events())
+
+            return {
+                "success": True,
+                "enabled": True,
+                "scale": scale,
+                "message": "Live display window opened. Close the window or call disable_live_display to stop."
+            }
+        else:
+            # Non-macOS: use threaded approach (works fine on Linux)
+            result = emu_thread.send_command(CommandType.ENABLE_LIVE_DISPLAY, {
+                "scale": scale
+            })
+
+            if result.get("error"):
+                return {"error": result["error"]}
+
+            return {
+                "success": result.get("success", False),
+                "enabled": result.get("enabled", False),
+                "scale": scale,
+                "message": "Live display window opened. Close the window or call disable_live_display to stop."
+            }
 
     @server.tool()
     async def disable_live_display() -> dict:
@@ -302,16 +374,39 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
-        result = emu_thread.send_command(CommandType.DISABLE_LIVE_DISPLAY)
+        global _macos_display, _macos_pump_task
 
-        if result.get("error"):
-            return {"error": result["error"]}
+        if sys.platform == "darwin" and _macos_display:
+            # Cancel the pump task
+            if _macos_pump_task and not _macos_pump_task.done():
+                _macos_pump_task.cancel()
+                try:
+                    await _macos_pump_task
+                except asyncio.CancelledError:
+                    pass
+            _macos_pump_task = None
 
-        return {
-            "success": True,
-            "enabled": False,
-            "message": "Live display window closed."
-        }
+            # Clean up display
+            _macos_display.cleanup()
+            emu_thread.emulator._live_display = None
+            _macos_display = None
+
+            return {
+                "success": True,
+                "enabled": False,
+                "message": "Live display window closed."
+            }
+        else:
+            result = emu_thread.send_command(CommandType.DISABLE_LIVE_DISPLAY)
+
+            if result.get("error"):
+                return {"error": result["error"]}
+
+            return {
+                "success": True,
+                "enabled": False,
+                "message": "Live display window closed."
+            }
 
     @server.tool()
     async def set_user_input(enabled: bool) -> dict:
