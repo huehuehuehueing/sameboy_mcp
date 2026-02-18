@@ -484,7 +484,8 @@ injected text, with the `▼` indicator (tile `0xEE`) signaling
 "press A to continue."
 
 Nurse Joy was now delivering the most important message in cinema history.
-A screenshot was captured at 4x scale and saved as `ashtray_winner.png`.
+
+![DONT BE A MENACE WHILE DRINKIN OJ](screenshots/pokeyellow_adventure_ahh_time_OJ.png)
 
 State saved as `ASHTRAY_WINNER` and exported to
 `examples/pokemon_agent/saved_states/ashtray_winner.sav`.
@@ -533,6 +534,8 @@ decode_screen_text() -> {
 There it was. The emotional core of both the movie and this Pokemon
 adventure, encoded in Gen 1 character glyphs and injected directly into
 video memory.
+
+![IM JUST TRYNA FIND MY DADDY](screenshots/pokeyellow_adventure_ahh_time_2.png)
 
 State saved as `FIND_MY_DADDY` and exported to
 `examples/pokemon_agent/saved_states/find_my_daddy.sav`.
