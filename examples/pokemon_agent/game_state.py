@@ -520,32 +520,51 @@ class GameStateReader:
         return warps
 
     async def _read_sprites(self) -> list[SpriteInfo]:
-        """Read sprite/NPC positions on current map."""
+        """Read sprite/NPC positions on current map.
+
+        Pokemon Yellow (like Red) uses TWO sprite tables:
+        - C1xx (0xC100 + i*16): picture_id at +0, facing at +9
+        - C2xx (0xC200 + i*16): Y position at +4, X position at +5
+
+        C2xx positions include a 4-tile border offset (used internally by the
+        game engine for map connections). We subtract 4 to normalize to the same
+        coordinate system as wXCoord/wYCoord (0-indexed map tile coordinates).
+        """
         sprites = []
         num_sprites = await self._read_byte(mem.WRAM_NUM_SPRITES)
 
         # Read up to 16 sprites (including player at index 0)
         for i in range(min(num_sprites + 1, 16)):
-            base = mem.WRAM_SPRITE_DATA + (i * 16)
-            data = await self._read(base, 16)
-            if len(data) >= 14:
-                picture_id = data[mem.SPRITE_PICTURE_ID]
-                # Skip empty sprites
-                if picture_id == 0 and i > 0:
-                    continue
+            # C1xx table: sprite metadata (picture ID, facing)
+            c1_base = 0xC100 + (i * 16)
+            c1_data = await self._read(c1_base, 16)
+            if len(c1_data) < 10:
+                continue
 
-                map_y = data[mem.SPRITE_MAP_Y]
-                map_x = data[mem.SPRITE_MAP_X]
-                facing = data[mem.SPRITE_FACING]
+            picture_id = c1_data[0]   # SPRITE_PICTURE_ID
+            # Skip empty sprites
+            if picture_id == 0 and i > 0:
+                continue
 
-                sprites.append(SpriteInfo(
-                    index=i,
-                    x=map_x,
-                    y=map_y,
-                    picture_id=picture_id,
-                    facing=facing,
-                    is_player=(i == 0),
-                ))
+            facing = c1_data[9]       # SPRITE_FACING
+
+            # C2xx table: sprite positions (raw includes 4-tile border)
+            c2_base = 0xC200 + (i * 16)
+            c2_data = await self._read(c2_base, 16)
+            raw_y = c2_data[4] if len(c2_data) > 5 else 0
+            raw_x = c2_data[5] if len(c2_data) > 5 else 0
+            # Normalize: subtract border offset to match wXCoord/wYCoord
+            map_x = raw_x - 4
+            map_y = raw_y - 4
+
+            sprites.append(SpriteInfo(
+                index=i,
+                x=map_x,
+                y=map_y,
+                picture_id=picture_id,
+                facing=facing,
+                is_player=(i == 0),
+            ))
 
         return sprites
 
