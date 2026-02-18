@@ -8,6 +8,7 @@ import sys
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import require_rom
 
 # Module-level state for macOS main-thread SDL display
 _macos_display = None
@@ -25,6 +26,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.PAUSE)
 
         if result.get("error"):
@@ -40,6 +43,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.RESUME)
 
         if result.get("error"):
@@ -55,6 +60,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Frame information including whether a breakpoint was hit
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.STEP_FRAME)
 
         if result.get("error"):
@@ -74,6 +81,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Instruction info and cycle count
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.STEP_INSTRUCTION)
 
         if result.get("error"):
@@ -93,6 +102,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.RESET)
 
         if result.get("error"):
@@ -112,6 +123,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         if frames < 1:
             frames = 1
         if frames > 600:  # Max 10 seconds at 60fps
@@ -143,6 +156,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SET_KEY, {
             "key": key,
             "pressed": pressed
@@ -169,6 +184,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         if frames < 1:
             frames = 1
         if frames > 600:
@@ -213,6 +230,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Execution summary
         """
+        if err := require_rom(emu_thread):
+            return err
         if count < 1:
             count = 1
         if count > 3600:
@@ -249,6 +268,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SET_TURBO, {
             "enabled": enabled,
             "no_frame_skip": no_frame_skip
@@ -282,6 +303,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Status of the live display
         """
+        if err := require_rom(emu_thread):
+            return err
         global _macos_display, _macos_pump_task
 
         if scale < 1:
@@ -374,6 +397,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         global _macos_display, _macos_pump_task
 
         if sys.platform == "darwin" and _macos_display:
@@ -429,6 +454,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Status of user input setting
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SET_USER_INPUT_ENABLED, {
             "enabled": enabled
         })
@@ -460,6 +487,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SAVE_BATTERY, {"path": path})
 
         if result.get("error"):
@@ -483,6 +512,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.LOAD_BATTERY, {"path": path})
 
         if result.get("error"):
@@ -510,6 +541,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         if seconds < 0.1:
             seconds = 0.1
         if seconds > 60.0:
@@ -539,6 +572,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Whether the rewind was successful
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.REWIND_POP)
 
         if result.get("error"):
@@ -561,6 +596,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.REWIND_RESET)
 
         if result.get("error"):
@@ -587,6 +624,8 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SET_RENDERING_DISABLED, {
             "disabled": disabled
         })

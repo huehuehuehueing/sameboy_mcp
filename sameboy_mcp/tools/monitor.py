@@ -7,7 +7,7 @@ from typing import Union
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
-from .utils import parse_address
+from .utils import parse_address, require_rom
 
 
 def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -24,6 +24,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         if len(addresses) > 256:
             addresses = addresses[:256]
 
@@ -54,6 +56,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         if addresses is not None:
             addresses = [parse_address(addr) for addr in addresses]
 
@@ -80,6 +84,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             List of memory change events
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.GET_MEMORY_CHANGES, {
             "since_frame": since_frame
         })
@@ -101,6 +107,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.CLEAR_MEMORY_CHANGES)
 
         if result.get("error"):
@@ -116,6 +124,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.TAKE_SNAPSHOT)
 
         if result.get("error"):
@@ -134,6 +144,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Dictionary of changed addresses with old/new values
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.COMPARE_SNAPSHOT)
 
         if result.get("error"):
@@ -159,6 +171,8 @@ def register_monitor_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             List of addresses containing the value
         """
+        if err := require_rom(emu_thread):
+            return err
         if size not in (1, 2, 4):
             return {"error": "Size must be 1, 2, or 4 bytes"}
 

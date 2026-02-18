@@ -7,7 +7,7 @@ from typing import Union
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
-from .utils import parse_address
+from .utils import parse_address, require_rom
 
 
 def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -25,6 +25,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         addr = parse_address(address)
         result = emu_thread.send_command(CommandType.SET_BREAKPOINT, {
             "address": addr,
@@ -51,6 +53,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         addr = parse_address(address)
         result = emu_thread.send_command(CommandType.REMOVE_BREAKPOINT, {
             "address": addr
@@ -72,6 +76,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             List of breakpoint objects
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.LIST_BREAKPOINTS)
 
         if result.get("error"):
@@ -90,6 +96,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.CLEAR_BREAKPOINTS)
 
         if result.get("error"):
@@ -109,6 +117,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SET_TRACE, {
             "enabled": enabled,
             "limit": limit
@@ -134,6 +144,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             List of trace entries with address, opcode, frame
         """
+        if err := require_rom(emu_thread):
+            return err
         if count > 10000:
             count = 10000
         if count < 1:
@@ -157,6 +169,8 @@ def register_debug_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.CLEAR_TRACE)
 
         if result.get("error"):

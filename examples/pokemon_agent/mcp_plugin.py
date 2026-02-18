@@ -299,6 +299,13 @@ def _read_word_le(emu_thread: EmulatorThread, addr: int) -> int:
 # Plugin entry point
 # ============================================================
 
+def _require_rom(emu_thread: EmulatorThread) -> dict | None:
+    """Return an error dict if no ROM is loaded, else None."""
+    if not emu_thread.emulator._rom_loaded:
+        return {"error": "No ROM loaded. Use load_rom() first."}
+    return None
+
+
 def register_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register Pokemon Yellow-specific MCP tools."""
 
@@ -325,6 +332,8 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Decoded text rows, extracted text lines, and raw tile grid
         """
+        if err := _require_rom(emu_thread):
+            return err
         total = width * height
         if total > 1024:
             return {"error": f"Tile map too large: {total} tiles (max 1024)"}
@@ -376,6 +385,8 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Grid of tile IDs (hex strings) organized by row
         """
+        if err := _require_rom(emu_thread):
+            return err
         total = width * height
         if total > 1024:
             return {"error": f"Tile map too large: {total} tiles (max 1024)"}
@@ -416,6 +427,8 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Map metadata, ASCII grid, warp list, and sprite list
         """
+        if err := _require_rom(emu_thread):
+            return err
         from .pokemon_data import MAP_NAMES, TILESET_NAMES
 
         # --- Read basic map info ---

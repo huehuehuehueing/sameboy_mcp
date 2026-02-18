@@ -7,7 +7,7 @@ from typing import Union
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
-from .utils import parse_address
+from .utils import parse_address, require_rom
 
 
 def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -21,6 +21,8 @@ def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Dictionary with register names and values
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.GET_REGISTERS)
 
         if result.get("error"):
@@ -74,6 +76,8 @@ def register_cpu_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         if count < 1:
             count = 1
 
+        if err := require_rom(emu_thread):
+            return err
         addr = parse_address(address) if address is not None else None
 
         result = emu_thread.send_command(CommandType.DISASSEMBLE, {

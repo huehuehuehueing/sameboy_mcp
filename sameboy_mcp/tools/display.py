@@ -8,6 +8,7 @@ import io
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import require_rom
 
 
 def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -25,6 +26,8 @@ def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Screen image data with dimensions
         """
+        if err := require_rom(emu_thread):
+            return err
         scale = max(1, min(4, scale))
         # Get screen size
         size_result = emu_thread.send_command(CommandType.GET_SCREEN_SIZE)
@@ -107,6 +110,8 @@ def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             List of sprite objects with position, tile, flags
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.GET_OAM)
 
         if result.get("error"):
@@ -125,6 +130,8 @@ def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Screen dimensions and related information
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.GET_SCREEN_SIZE)
 
         if result.get("error"):

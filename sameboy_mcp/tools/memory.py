@@ -7,7 +7,7 @@ from typing import Union
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
-from .utils import parse_address
+from .utils import parse_address, require_rom
 
 
 def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -25,6 +25,8 @@ def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Dictionary with hex string of memory contents
         """
+        if err := require_rom(emu_thread):
+            return err
         addr = parse_address(address)
         if length > 4096:
             length = 4096
@@ -56,6 +58,8 @@ def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         addr = parse_address(address)
         result = emu_thread.send_command(CommandType.WRITE_MEMORY, {
             "address": addr,
@@ -82,6 +86,8 @@ def register_memory_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Base64-encoded region data with metadata
         """
+        if err := require_rom(emu_thread):
+            return err
         import base64
 
         result = emu_thread.send_command(CommandType.GET_DIRECT_ACCESS, {"region": region})

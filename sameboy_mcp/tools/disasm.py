@@ -7,7 +7,7 @@ from typing import Union
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
-from .utils import parse_address
+from .utils import parse_address, require_rom
 
 
 def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
@@ -29,6 +29,8 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Disassembly with instructions, header info, and metadata
         """
+        if err := require_rom(emu_thread):
+            return err
         if max_instructions > 10000:
             max_instructions = 10000
         if max_instructions < 1:
@@ -63,6 +65,8 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Function disassembly with control flow information
         """
+        if err := require_rom(emu_thread):
+            return err
         if max_size > 4096:
             max_size = 4096
         if max_size < 1:
@@ -90,6 +94,8 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             ROM header information
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.GET_ROM_HEADER)
 
         if result.get("error"):
@@ -113,6 +119,8 @@ def register_disasm_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             List of potential function addresses with context
         """
+        if err := require_rom(emu_thread):
+            return err
         params = {}
         if scan_range:
             params["scan_start"] = scan_range[0]

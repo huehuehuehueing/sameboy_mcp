@@ -9,6 +9,7 @@ import uuid
 from mcp.server import FastMCP
 
 from ..emulator.thread import EmulatorThread, CommandType
+from .utils import require_rom
 
 
 # Global state cache (would be better as server attribute, but keeping simple)
@@ -29,6 +30,8 @@ def register_state_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             State ID and metadata
         """
+        if err := require_rom(emu_thread):
+            return err
         result = emu_thread.send_command(CommandType.SAVE_STATE)
 
         if result.get("error"):
@@ -68,6 +71,8 @@ def register_state_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         Returns:
             Confirmation message
         """
+        if err := require_rom(emu_thread):
+            return err
         if state_id not in _state_cache:
             return {"error": f"State '{state_id}' not found"}
 
