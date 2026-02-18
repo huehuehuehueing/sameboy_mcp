@@ -37,7 +37,7 @@ from mcp.server import FastMCP
 
 from .emulator.core import SameBoyEmulator, EmulatorState
 from .emulator.thread import EmulatorThread, CommandType
-from .tools import memory, cpu, display, state, debug, control, monitor, disasm
+from .tools import memory, cpu, display, state, debug, control, monitor, disasm, gameboy
 
 # Configure logging
 logging.basicConfig(
@@ -100,6 +100,7 @@ def create_server(
     control.register_control_tools(server, emu_thread)
     monitor.register_monitor_tools(server, emu_thread)
     disasm.register_disasm_tools(server, emu_thread)
+    gameboy.register_gameboy_tools(server, emu_thread)
 
     # Register server-level tools
     @server.tool()
@@ -234,6 +235,10 @@ def create_server(
                     "take_memory_snapshot - Snapshot RAM state",
                     "compare_memory_snapshot - Compare with snapshot",
                     "find_value - Search memory for value",
+                ],
+                "Game Boy": [
+                    "decode_screen_text - Decode screen tile map to text (Gen 1 Pokemon encoding)",
+                    "read_screen_tiles - Read raw tile IDs from screen tile map",
                 ],
             },
             "keys": ["a", "b", "start", "select", "up", "down", "left", "right"],
