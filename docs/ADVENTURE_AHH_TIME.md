@@ -152,6 +152,8 @@ decode_screen_text -> {
 
 Selected the Potion. Confirmed quantity 1. Logged off.
 
+![Withdrew POTION from the PC](screenshots/pokeyellow_adventure_ahh_time_withdrew_potion.png)
+
 One Potion acquired. Through *legitimate gameplay*. Grandmama would be
 proud.
 
@@ -202,6 +204,8 @@ Bag menu confirmation:
 "text_lines": ["POTION", "x99", "CANCEL"]
 ```
 
+![POTION x99](screenshots/pokeyellow_adventure_ahh_time_99_potions.png)
+
 99 Potions. Like that scene where Loc Dog pulls out an increasingly
 ridiculous number of weapons. Except these heal.
 
@@ -234,6 +238,8 @@ decode_screen_text -> {
 ```
 
 99 Potions. 99 Master Balls. Ashtray was strapped.
+
+![POTION x99 and MASTER BALL x99](screenshots/pokeyellow_adventure_ahh_time_master_balls.png)
 
 **Tools used:** `read_memory`, `write_memory`, `press_key`, `decode_screen_text`
 
@@ -318,6 +324,12 @@ encoding (A=`0x80`, S=`0x92`, H=`0x87`).
 
 **Nicknames** "MEW" at `0xD2B8` and "MAGIKARP" at `0xD2C3`.
 
+![The squad: MEW and MAGIKARP](screenshots/pokeyellow_adventure_ahh_time_hacked_party.png)
+
+![Mew stats -- 299 across the board](screenshots/pokeyellow_adventure_ahh_time_mew_stats.png)
+
+![Magikarp stats -- emotional support fish](screenshots/pokeyellow_adventure_ahh_time_magikarp_stats.png)
+
 **Tools used:** `read_memory`, `write_memory` (dozens of calls), `press_key`, `capture_screen`
 
 ---
@@ -354,6 +366,8 @@ active (value: 89), blocking all movement. My homie wrote `0` to clear
 it.
 
 Free at last.
+
+![Arrived at Pewter Pokemon Center via warp hack](screenshots/pokeyellow_adventure_ahh_time_pokecenter_arrival.png)
 
 ---
 
@@ -413,6 +427,8 @@ decode_screen_text -> {
 
 *"Welcome to our POKEMON CENTER!"* -- there she was. The baddest nurse
 in Kanto. And she had no idea what was about to happen to her dialog.
+
+![Nurse Joy welcomes Ashtray](screenshots/pokeyellow_adventure_ahh_time_nurse_joy.png)
 
 **Tools used:** `press_key`, `run_frames`, `decode_screen_text`, `render_ascii_map`
 
