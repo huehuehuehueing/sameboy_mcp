@@ -443,3 +443,160 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
             "live_display_active": result.get("live_display_active", False),
             "message": f"User keyboard input {status}."
         }
+
+    # ============ Battery (Game Save Files) ============
+
+    @server.tool()
+    async def save_battery(path: str) -> dict:
+        """
+        Save the game's battery-backed RAM (SRAM) to a file.
+
+        This saves the in-game save data (e.g., Pokemon save file) to disk.
+        The file can be loaded later with load_battery to restore game progress.
+
+        Args:
+            path: File path to save to (typically .sav extension)
+
+        Returns:
+            Confirmation message
+        """
+        result = emu_thread.send_command(CommandType.SAVE_BATTERY, {"path": path})
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        return {
+            "success": result.get("success", False),
+            "path": path,
+        }
+
+    @server.tool()
+    async def load_battery(path: str) -> dict:
+        """
+        Load battery-backed RAM (SRAM) from a file.
+
+        Restores in-game save data from a previously saved .sav file.
+
+        Args:
+            path: File path to load from
+
+        Returns:
+            Confirmation message
+        """
+        result = emu_thread.send_command(CommandType.LOAD_BATTERY, {"path": path})
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        return {
+            "success": result.get("success", False),
+            "path": path,
+        }
+
+    # ============ Rewind ============
+
+    @server.tool()
+    async def enable_rewind(seconds: float = 10.0) -> dict:
+        """
+        Enable the rewind buffer with a specified length.
+
+        Once enabled, the emulator records state snapshots that can be
+        rewound frame-by-frame using rewind_pop. Useful for undoing
+        mistakes without full save states.
+
+        Args:
+            seconds: How many seconds of rewind history to keep (default 10, max 60)
+
+        Returns:
+            Confirmation message
+        """
+        if seconds < 0.1:
+            seconds = 0.1
+        if seconds > 60.0:
+            seconds = 60.0
+
+        result = emu_thread.send_command(CommandType.SET_REWIND_LENGTH, {
+            "seconds": seconds
+        })
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        return {
+            "success": True,
+            "rewind_seconds": seconds,
+            "message": f"Rewind buffer set to {seconds}s. Use rewind_pop to step back.",
+        }
+
+    @server.tool()
+    async def rewind_pop() -> dict:
+        """
+        Pop one rewind state, stepping the emulator back in time.
+
+        Each call rewinds by approximately one frame. Call multiple times
+        to rewind further. Returns false if the rewind buffer is empty.
+
+        Returns:
+            Whether the rewind was successful
+        """
+        result = emu_thread.send_command(CommandType.REWIND_POP)
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        success = result.get("success", False)
+        return {
+            "success": success,
+            "message": "Rewound one frame." if success else "Rewind buffer empty.",
+        }
+
+    @server.tool()
+    async def rewind_reset() -> dict:
+        """
+        Clear the rewind buffer.
+
+        Discards all stored rewind history. Use enable_rewind to start
+        recording again.
+
+        Returns:
+            Confirmation message
+        """
+        result = emu_thread.send_command(CommandType.REWIND_RESET)
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        return {"success": True, "message": "Rewind buffer cleared."}
+
+    # ============ Rendering Control ============
+
+    @server.tool()
+    async def set_rendering_disabled(disabled: bool) -> dict:
+        """
+        Disable or enable pixel rendering.
+
+        When rendering is disabled, the emulator skips all pixel drawing,
+        significantly speeding up execution. Useful when the agent doesn't
+        need to see the screen (e.g., advancing through text, running many
+        frames with turbo). Screen captures will return blank frames while
+        rendering is disabled.
+
+        Args:
+            disabled: True to disable rendering, False to re-enable
+
+        Returns:
+            Confirmation message
+        """
+        result = emu_thread.send_command(CommandType.SET_RENDERING_DISABLED, {
+            "disabled": disabled
+        })
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        status = "disabled" if disabled else "enabled"
+        return {
+            "success": True,
+            "rendering": status,
+            "message": f"Pixel rendering {status}.",
+        }

@@ -84,6 +84,18 @@ class CommandType(Enum):
     GET_ROM_HEADER = auto()
     FIND_FUNCTIONS = auto()
 
+    # Battery (game save files)
+    SAVE_BATTERY = auto()
+    LOAD_BATTERY = auto()
+
+    # Rewind
+    SET_REWIND_LENGTH = auto()
+    REWIND_POP = auto()
+    REWIND_RESET = auto()
+
+    # Rendering
+    SET_RENDERING_DISABLED = auto()
+
 
 @dataclass
 class Command:
@@ -413,6 +425,33 @@ class EmulatorThread:
                         args.get("scan_end")
                     )
                     return result
+
+                # Battery (game save files)
+                case CommandType.SAVE_BATTERY:
+                    success = emu.save_battery(args["path"])
+                    return {"success": success}
+
+                case CommandType.LOAD_BATTERY:
+                    success = emu.load_battery(args["path"])
+                    return {"success": success}
+
+                # Rewind
+                case CommandType.SET_REWIND_LENGTH:
+                    emu.set_rewind_length(args["seconds"])
+                    return {"success": True}
+
+                case CommandType.REWIND_POP:
+                    success = emu.rewind_pop()
+                    return {"success": success}
+
+                case CommandType.REWIND_RESET:
+                    emu.rewind_reset()
+                    return {"success": True}
+
+                # Rendering
+                case CommandType.SET_RENDERING_DISABLED:
+                    emu.set_rendering_disabled(args["disabled"])
+                    return {"success": True}
 
                 case _:
                     return {"error": f"Unknown command type: {cmd.type}"}

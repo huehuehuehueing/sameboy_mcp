@@ -115,6 +115,10 @@ class SameBoyEmulator:
         # Live display
         self._live_display: Optional["LiveDisplay"] = None
 
+        # Rendering and rewind state
+        self._rendering_disabled = False
+        self._rewind_seconds = 0.0
+
     def init(self, model: str = "CGB_E") -> None:
         """
         Initialize the Game Boy emulator.
@@ -642,6 +646,40 @@ class SameBoyEmulator:
                 changes[addr] = (old_val, new_val)
 
         return changes
+
+    # ============ Battery (Game Save Files) ============
+
+    def save_battery(self, path: str) -> bool:
+        """Save battery/SRAM to a file (.sav)."""
+        result = self.lib.GB_save_battery(self.gb, path.encode("utf-8"))
+        return result == 0
+
+    def load_battery(self, path: str) -> bool:
+        """Load battery/SRAM from a file (.sav)."""
+        result = self.lib.GB_load_battery(self.gb, path.encode("utf-8"))
+        return result == 0
+
+    # ============ Rewind ============
+
+    def set_rewind_length(self, seconds: float) -> None:
+        """Set the rewind buffer length in seconds."""
+        self.lib.GB_set_rewind_length(self.gb, seconds)
+        self._rewind_seconds = seconds
+
+    def rewind_pop(self) -> bool:
+        """Pop one rewind state, stepping back in time."""
+        return bool(self.lib.GB_rewind_pop(self.gb))
+
+    def rewind_reset(self) -> None:
+        """Clear the rewind buffer."""
+        self.lib.GB_rewind_reset(self.gb)
+
+    # ============ Rendering Control ============
+
+    def set_rendering_disabled(self, disabled: bool) -> None:
+        """Disable or enable pixel rendering (faster headless execution)."""
+        self.lib.GB_set_rendering_disabled(self.gb, disabled)
+        self._rendering_disabled = disabled
 
     # ============ Turbo Mode ============
 

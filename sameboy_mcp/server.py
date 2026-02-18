@@ -37,7 +37,7 @@ from mcp.server import FastMCP
 
 from .emulator.core import SameBoyEmulator, EmulatorState
 from .emulator.thread import EmulatorThread, CommandType
-from .tools import memory, cpu, display, state, debug, control, monitor, disasm, gameboy
+from .tools import memory, cpu, display, state, debug, control, monitor, disasm
 
 # Configure logging
 logging.basicConfig(
@@ -53,6 +53,7 @@ def create_server(
     rom_path: str | None = None,
     boot_rom_path: str | None = None,
     model: str = "CGB_E",
+    plugins: list[str] | None = None,
 ) -> tuple[FastMCP, SameBoyEmulator, EmulatorThread]:
     """
     Create and configure the MCP server with emulator.
@@ -91,7 +92,7 @@ def create_server(
     # Create emulator thread
     emu_thread = EmulatorThread(emulator)
 
-    # Register all tool modules
+    # Register all built-in tool modules
     memory.register_memory_tools(server, emu_thread)
     cpu.register_cpu_tools(server, emu_thread)
     display.register_display_tools(server, emu_thread)
@@ -100,7 +101,16 @@ def create_server(
     control.register_control_tools(server, emu_thread)
     monitor.register_monitor_tools(server, emu_thread)
     disasm.register_disasm_tools(server, emu_thread)
-    gameboy.register_gameboy_tools(server, emu_thread)
+
+    # Load plugins
+    import importlib
+    for module_path in (plugins or []):
+        try:
+            mod = importlib.import_module(module_path)
+            mod.register_tools(server, emu_thread)
+            logger.info(f"Loaded plugin: {module_path}")
+        except Exception:
+            logger.exception(f"Failed to load plugin: {module_path}")
 
     # Register server-level tools
     @server.tool()
@@ -209,6 +219,7 @@ def create_server(
                     "press_keys - Press multiple buttons",
                     "run_frames - Run multiple frames",
                     "set_turbo - Enable/disable turbo mode",
+                    "set_rendering_disabled - Skip pixel rendering for speed",
                 ],
                 "Save States": [
                     "save_state - Save current state",
@@ -217,6 +228,15 @@ def create_server(
                     "delete_state - Delete a saved state",
                     "export_state - Export state as base64",
                     "import_state - Import state from base64",
+                ],
+                "Battery (Game Saves)": [
+                    "save_battery - Save SRAM to .sav file",
+                    "load_battery - Load SRAM from .sav file",
+                ],
+                "Rewind": [
+                    "enable_rewind - Set rewind buffer length",
+                    "rewind_pop - Step back one frame",
+                    "rewind_reset - Clear rewind buffer",
                 ],
                 "Debugging": [
                     "set_breakpoint - Set execution breakpoint",
@@ -236,10 +256,6 @@ def create_server(
                     "compare_memory_snapshot - Compare with snapshot",
                     "find_value - Search memory for value",
                 ],
-                "Game Boy": [
-                    "decode_screen_text - Decode screen tile map to text (Gen 1 Pokemon encoding)",
-                    "read_screen_tiles - Read raw tile IDs from screen tile map",
-                ],
             },
             "keys": ["a", "b", "start", "select", "up", "down", "left", "right"],
             "models": ["DMG_B", "CGB_E", "AGB", "SGB", "SGB2"],
@@ -256,6 +272,7 @@ async def run_server(
     transport: str = "stdio",
     host: str = "127.0.0.1",
     port: int = 8765,
+    plugins: list[str] | None = None,
 ) -> None:
     """
     Run the MCP server.
@@ -268,12 +285,14 @@ async def run_server(
         transport: Transport type ("stdio" or "sse")
         host: Host to bind SSE server (default: 127.0.0.1)
         port: Port for SSE server (default: 8765)
+        plugins: Optional list of plugin module paths
     """
     server, emulator, emu_thread = create_server(
         lib_path=lib_path,
         rom_path=rom_path,
         boot_rom_path=boot_rom_path,
         model=model,
+        plugins=plugins,
     )
 
     # Start emulator thread
@@ -370,6 +389,12 @@ Examples:
         default=8765,
         help="Port for SSE server (default: 8765)",
     )
+    parser.add_argument(
+        "--plugin",
+        action="append",
+        default=[],
+        help="Python module path providing register_tools(server, emu_thread). Repeatable.",
+    )
 
     args = parser.parse_args()
 
@@ -385,6 +410,7 @@ Examples:
             transport="sse" if args.sse else "stdio",
             host=args.host,
             port=args.port,
+            plugins=args.plugin,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

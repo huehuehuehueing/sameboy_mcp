@@ -14,16 +14,18 @@ def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register display-related tools with the MCP server."""
 
     @server.tool()
-    async def capture_screen(format: str = "png") -> dict:
+    async def capture_screen(format: str = "png", scale: int = 1) -> dict:
         """
         Capture the current screen.
 
         Args:
             format: Image format ("png" or "raw")
+            scale: Upscale factor (1-4, default 1). Uses nearest-neighbor for crisp pixels.
 
         Returns:
             Screen image data with dimensions
         """
+        scale = max(1, min(4, scale))
         # Get screen size
         size_result = emu_thread.send_command(CommandType.GET_SCREEN_SIZE)
         if size_result.get("error"):
@@ -70,12 +72,19 @@ def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
                 img_data[offset + 3] = a
 
             img = Image.frombytes("RGBA", (width, height), bytes(img_data))
+
+            if scale > 1:
+                img = img.resize(
+                    (width * scale, height * scale),
+                    resample=Image.NEAREST,
+                )
+
             buf = io.BytesIO()
             img.save(buf, format="PNG")
 
             return {
-                "width": width,
-                "height": height,
+                "width": width * scale,
+                "height": height * scale,
                 "format": "png",
                 "data_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
             }
