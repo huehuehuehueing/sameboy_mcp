@@ -135,7 +135,7 @@ def register_display_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
 
         Args:
             path: Filesystem path to write the PNG file to.
-            scale: Upscale factor (1-4, default 1). Uses nearest-neighbor for crisp pixels.
+            scale: Upscale factor (1-4, default 2). Uses nearest-neighbor for crisp pixels.
 
         Returns:
             Success status, path, and image dimensions.
