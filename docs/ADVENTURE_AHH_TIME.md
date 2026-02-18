@@ -445,14 +445,43 @@ immediately.
 
 Verified:
 
-```
-decode_screen_text -> {
+```json
+decode_screen_text() -> {
+  "address": "0xC3A0",
+  "width": 20,
+  "height": 18,
+  "rows": [
+    "                    ",
+    "                    ",
+    "    ",
+    "    ",
+    "      ",
+    "      ",
+    "  ",
+    "  ",
+    "         ",
+    "         ",
+    "         ",
+    "         ",
+    "┌──────────────────┐",
+    "│                  │",
+    "│DONT BE A MENACE  │",
+    "│                  │",
+    "│WHILE DRINKIN OJ ▼│",
+    "└──────────────────┘"
+  ],
   "text_lines": [
     "DONT BE A MENACE",
-    "WHILE DRINKIN OJ"
+    "WHILE DRINKIN OJ ▼"
   ]
 }
 ```
+
+The full 20x18 tile map decoded. Rows 0-11 are the Pokemon Center
+interior (mostly blank tiles where sprites render). Rows 12-17 are
+the text box: Gen 1 box-drawing characters (`┌─┐│└┘`) framing the
+injected text, with the `▼` indicator (tile `0xEE`) signaling
+"press A to continue."
 
 Nurse Joy was now delivering the most important message in cinema history.
 A screenshot was captured at 4x scale and saved as `ashtray_winner.png`.
@@ -469,8 +498,31 @@ daddy. That's the subplot. That's the heart. So when Joy advanced her
 dialog to *"We heal your POKeMON back to perfect health!"*, my homie
 paused again and dropped the second injection:
 
-```
-decode_screen_text -> {
+```json
+decode_screen_text() -> {
+  "address": "0xC3A0",
+  "width": 20,
+  "height": 18,
+  "rows": [
+    "                    ",
+    "                    ",
+    "    ",
+    "    ",
+    "      ",
+    "      ",
+    "  ",
+    "  ",
+    "         ",
+    "         ",
+    "         ",
+    "         ",
+    "┌──────────────────┐",
+    "│                  │",
+    "│IM JUST TRYNA     │",
+    "│                  │",
+    "│FIND MY DADDY     │",
+    "└──────────────────┘"
+  ],
   "text_lines": [
     "IM JUST TRYNA",
     "FIND MY DADDY"

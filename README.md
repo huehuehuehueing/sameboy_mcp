@@ -81,11 +81,26 @@ await disable_live_display()
 
 ## Documentation
 
+### Reference
+
 - [Installation Guide](docs/INSTALLATION.md)
 - [API Reference](docs/API.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Examples](docs/EXAMPLES.md)
 - [Testing](docs/TESTING.md)
+
+### Pokemon Yellow Agent
+
+Technical deep-dives into the Pokemon Yellow MCP agent and its subsystems:
+
+- [RAM Vision](docs/RAM_VISION.md) — Reading game screens from memory instead of screenshots, plus the ASCII map renderer
+- [The Nro of Pokemon](docs/THE_NRO_OF_POKEMON.md) — Map/tile/block hierarchy, collision, warps, sprites, and the rendering pipeline
+- [Grab Da Potion](docs/GRAB_DA_POTION.md) — Complete MCP workflow: withdrawing an item from the PC using only RAM-based text decoding
+- [Where Am I Bro](docs/WHERE_AM_I_BRO.md) — Finding and reading signs by memory address lookup
+
+### Walkthrough
+
+- [Don't Be a Menace to Pallet Town](docs/ADVENTURE_AHH_TIME.md) — A full adventure walkthrough demonstrating inventory hacking, Pokemon injection, warp table hijacking, and VRAM text injection through MCP tools
 
 ## Example Use Cases
 
@@ -99,16 +114,25 @@ await disable_live_display()
 
 ```
 project_sameboy/
-├── sameboy_mcp/           # MCP server implementation
-│   ├── emulator/          # libsameboy wrapper
-│   │   ├── bindings.py    # cffi declarations
-│   │   ├── core.py        # Emulator class
-│   │   ├── thread.py      # Background execution
-│   │   └── display.py     # SDL2 live display
-│   ├── tools/             # MCP tool modules
-│   └── server.py          # MCP entry point
-├── sameboy_src/           # SameBoy source code
-└── docs/                  # Documentation
+├── sameboy_mcp/               # MCP server implementation
+│   ├── emulator/              # libsameboy wrapper
+│   │   ├── bindings.py        # cffi declarations
+│   │   ├── core.py            # Emulator class
+│   │   ├── thread.py          # Background execution
+│   │   └── display.py         # SDL2 live display
+│   ├── tools/                 # MCP tool modules
+│   └── server.py              # MCP entry point (supports --plugin)
+├── examples/
+│   └── pokemon_agent/         # Pokemon Yellow AI agent
+│       ├── mcp_plugin.py      # Game-specific MCP tools (text decoder, ASCII map)
+│       ├── main.py            # Agent entry point
+│       ├── memory_map.py      # WRAM addresses & character encoding
+│       ├── game_state.py      # State reading & mode detection
+│       ├── routines.py        # BFS pathfinding & game interaction
+│       ├── area_analyzer.py   # MCP-driven area analysis
+│       └── saved_states/      # Pre-captured game states
+├── sameboy_src/               # SameBoy source code
+└── docs/                      # Documentation & walkthroughs
 ```
 
 ## Contributors
