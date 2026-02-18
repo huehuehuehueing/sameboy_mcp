@@ -306,8 +306,26 @@ def _require_rom(emu_thread: EmulatorThread) -> dict | None:
     return None
 
 
-def register_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
+def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) -> None:
     """Register Pokemon Yellow-specific MCP tools."""
+
+    # Register dashboard snapshot hook for live game state
+    if dashboard is not None:
+        from .pokemon_data import MAP_NAMES
+
+        def pokemon_snapshot_hook(emu_thread):
+            map_id = _read_byte(emu_thread, 0xD35D)
+            return {
+                "map_id": map_id,
+                "map_name": MAP_NAMES.get(map_id, f"Map {map_id}"),
+                "player_x": _read_byte(emu_thread, 0xD361),
+                "player_y": _read_byte(emu_thread, 0xD360),
+                "party_count": _read_byte(emu_thread, 0xD162),
+                "badge_count": bin(_read_byte(emu_thread, 0xD355)).count("1"),
+                "in_battle": _read_byte(emu_thread, 0xD056),
+            }
+
+        dashboard.register_snapshot_hook(pokemon_snapshot_hook)
 
     # ----------------------------------------------------------
     # decode_screen_text

@@ -115,6 +115,9 @@ class SameBoyEmulator:
         # Live display
         self._live_display: Optional["LiveDisplay"] = None
 
+        # Dashboard frame relay
+        self._dashboard_frame_relay: Optional[Any] = None
+
         # Rendering and rewind state
         self._rendering_disabled = False
         self._rewind_seconds = 0.0
@@ -154,12 +157,19 @@ class SameBoyEmulator:
         @ffi.callback("void(GB_gameboy_t*, GB_vblank_type_t)")
         def vblank_cb(gb, vblank_type):
             self._frame_count += 1
+            # vblank_type 0 = normal frame, skip others to avoid duplicate frames
+            if vblank_type != 0:
+                return
             # Update live display if enabled
             if self._live_display and self._live_display.is_running:
-                # vblank_type 0 = normal frame, skip others to avoid duplicate frames
-                if vblank_type == 0:
+                pixels = self.get_screen_pixels()
+                self._live_display.update_frame(pixels)
+            # Update dashboard frame relay if enabled
+            if self._dashboard_frame_relay:
+                if not (self._live_display and self._live_display.is_running):
                     pixels = self.get_screen_pixels()
-                    self._live_display.update_frame(pixels)
+                width, height = self.get_screen_size()
+                self._dashboard_frame_relay.on_vblank(pixels, width, height)
 
         self._callbacks["vblank"] = vblank_cb
         self.lib.GB_set_vblank_callback(self.gb, vblank_cb)
@@ -782,6 +792,12 @@ class SameBoyEmulator:
         if self._live_display and self._live_display.is_running:
             return self._live_display.user_input_enabled
         return False
+
+    # ============ Dashboard ============
+
+    def set_dashboard_frame_relay(self, relay) -> None:
+        """Set the dashboard frame relay for streaming frames to the web UI."""
+        self._dashboard_frame_relay = relay
 
     # ============ ROM Disassembly ============
 

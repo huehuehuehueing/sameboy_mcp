@@ -53,7 +53,6 @@ def create_server(
     rom_path: str | None = None,
     boot_rom_path: str | None = None,
     model: str = "CGB_E",
-    plugins: list[str] | None = None,
 ) -> tuple[FastMCP, SameBoyEmulator, EmulatorThread]:
     """
     Create and configure the MCP server with emulator.
@@ -102,15 +101,8 @@ def create_server(
     monitor.register_monitor_tools(server, emu_thread)
     disasm.register_disasm_tools(server, emu_thread)
 
-    # Load plugins
-    import importlib
-    for module_path in (plugins or []):
-        try:
-            mod = importlib.import_module(module_path)
-            mod.register_tools(server, emu_thread)
-            logger.info(f"Loaded plugin: {module_path}")
-        except Exception:
-            logger.exception(f"Failed to load plugin: {module_path}")
+    # Plugins are loaded later by run_server() so the dashboard can be passed in.
+    # For direct callers of create_server(), use load_plugins() after.
 
     # Register server-level tools
     @server.tool()
@@ -264,6 +256,28 @@ def create_server(
     return server, emulator, emu_thread
 
 
+def load_plugins(
+    server: FastMCP,
+    emu_thread: EmulatorThread,
+    plugins: list[str] | None = None,
+    dashboard_server=None,
+) -> None:
+    """Load plugin modules and register their tools."""
+    import importlib
+    import inspect
+    for module_path in (plugins or []):
+        try:
+            mod = importlib.import_module(module_path)
+            sig = inspect.signature(mod.register_tools)
+            if "dashboard" in sig.parameters:
+                mod.register_tools(server, emu_thread, dashboard=dashboard_server)
+            else:
+                mod.register_tools(server, emu_thread)
+            logger.info(f"Loaded plugin: {module_path}")
+        except Exception:
+            logger.exception(f"Failed to load plugin: {module_path}")
+
+
 async def run_server(
     lib_path: str | None = None,
     rom_path: str | None = None,
@@ -273,6 +287,8 @@ async def run_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     plugins: list[str] | None = None,
+    dashboard: bool = False,
+    dashboard_port: int = 8766,
 ) -> None:
     """
     Run the MCP server.
@@ -286,18 +302,21 @@ async def run_server(
         host: Host to bind SSE server (default: 127.0.0.1)
         port: Port for SSE server (default: 8765)
         plugins: Optional list of plugin module paths
+        dashboard: Enable web dashboard
+        dashboard_port: Port for standalone dashboard (stdio mode only)
     """
     server, emulator, emu_thread = create_server(
         lib_path=lib_path,
         rom_path=rom_path,
         boot_rom_path=boot_rom_path,
         model=model,
-        plugins=plugins,
     )
 
     # Start emulator thread
     logger.info("Starting emulator thread")
     emu_thread.start()
+
+    dashboard_server = None
 
     try:
         if transport == "sse":
@@ -307,16 +326,47 @@ async def run_server(
             print(f"MCP Server running at: http://{host}:{port}/sse", file=sys.stderr)
             print(f"Connect with: --server-url http://{host}:{port}/sse", file=sys.stderr)
             app = server.sse_app()
+
+            if dashboard:
+                from .dashboard import DashboardServer
+                dashboard_server = DashboardServer(emu_thread)
+                dashboard_server.mount(app)
+                dashboard_server.start()
+                print(f"Dashboard: http://{host}:{port}/dashboard/", file=sys.stderr)
+
+            # Load plugins after dashboard so they can register snapshot hooks
+            load_plugins(server, emu_thread, plugins, dashboard_server)
+
             config = uvicorn.Config(app, host=host, port=port, log_level="warning")
             uvicorn_server = uvicorn.Server(config)
             await uvicorn_server.serve()
         else:
             # Run the MCP server with stdio transport
             logger.info("Starting MCP server on stdio")
+
+            if dashboard:
+                import uvicorn
+                from .dashboard import DashboardServer
+                dashboard_server = DashboardServer(emu_thread)
+                dash_app = dashboard_server.create_app()
+
+                dash_config = uvicorn.Config(
+                    dash_app, host=host, port=dashboard_port, log_level="warning"
+                )
+                dash_uvicorn = uvicorn.Server(dash_config)
+                # Run dashboard server in background task
+                dash_task = asyncio.create_task(dash_uvicorn.serve())
+                print(f"Dashboard: http://{host}:{dashboard_port}/dashboard/", file=sys.stderr)
+
+            # Load plugins after dashboard so they can register snapshot hooks
+            load_plugins(server, emu_thread, plugins, dashboard_server)
+
             await server.run_stdio_async()
     finally:
         # Cleanup
         logger.info("Shutting down")
+        if dashboard_server:
+            await dashboard_server.stop()
         emu_thread.stop()
         emulator.free()
 
@@ -395,6 +445,17 @@ Examples:
         default=[],
         help="Python module path providing register_tools(server, emu_thread). Repeatable.",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Enable web dashboard for live emulator monitoring",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8766,
+        help="Port for standalone dashboard in stdio mode (default: 8766)",
+    )
 
     args = parser.parse_args()
 
@@ -411,6 +472,8 @@ Examples:
             host=args.host,
             port=args.port,
             plugins=args.plugin,
+            dashboard=args.dashboard,
+            dashboard_port=args.dashboard_port,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

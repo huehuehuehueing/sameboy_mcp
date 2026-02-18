@@ -27,6 +27,12 @@ class Routines:
         self._verbose = verbose
         self._strategy = strategy
         self._blocked_tiles: set[tuple[int, int, int]] = set()  # (map_id, x, y)
+        # ASCII map cache for pathfinding
+        self._cached_map_id: int = -1
+        self._cached_collision_map = None  # CollisionMap
+        self._cached_warp_points: list = []  # list[Point]
+        # Warp we arrived from — excluded from pathfinding targets to avoid loops
+        self._arrival_warp: tuple[int, int, int] | None = None  # (map_id, x, y)
 
     def _log(self, msg: str):
         if self._verbose:
@@ -471,37 +477,100 @@ class Routines:
 
         return True
 
+    def invalidate_map_cache(self):
+        """Clear the cached ASCII collision map, forcing re-read on next pathfinding call."""
+        self._cached_map_id = -1
+        self._cached_collision_map = None
+        self._cached_warp_points = []
+
+    def set_arrival_warp(self, map_id: int, x: int, y: int):
+        """Record which warp tile we arrived on after a map change.
+
+        This warp is excluded from pathfinding targets so we don't
+        immediately walk back through it.
+        """
+        self._arrival_warp = (map_id, x, y)
+        self._log(f"arrival warp set: map {map_id} ({x},{y})")
+
     async def find_path_to_warp(self) -> list[str]:
         """
-        Find a path to the nearest warp using proper 2D pathfinding.
+        Find a path to the nearest warp using the ASCII map from render_ascii_map.
+
+        Uses cached collision data when available.
 
         Returns:
             List of directions ["down", "left", etc.] to reach the warp,
             or empty list if no path found.
         """
-        from .pathfinding import MapReader, find_path_to_nearest, Point
+        from .pathfinding import collision_map_from_ascii, find_path_to_nearest, Point
 
-        map_reader = MapReader(self._call)
+        # Read current state for player position + map_id
+        state = await self.read_state()
+        player_pos = Point(state.player_x, state.player_y)
 
-        # Get current position and warp locations
-        player_pos = await map_reader.get_player_position()
-        warp_positions = await map_reader.get_warp_positions()
+        # Use cached collision map if map hasn't changed
+        if self._cached_map_id == state.map_id and self._cached_collision_map is not None:
+            collision_map = self._cached_collision_map
+            warp_points = self._cached_warp_points
+            self._log(f"using cached collision map for map {state.map_id}")
+        else:
+            # Call render_ascii_map MCP tool
+            try:
+                result = await self._call("render_ascii_map", {"include_legend": False})
+            except Exception as e:
+                self._log(f"render_ascii_map call failed: {e}")
+                return []
 
-        if not warp_positions:
-            self._log("no warps found on this map")
+            if not isinstance(result, dict):
+                self._log(f"render_ascii_map: expected dict, got {type(result).__name__}: "
+                          f"{repr(result)[:300]}")
+                return []
+
+            if "ascii" not in result:
+                self._log(f"render_ascii_map: 'ascii' key missing, keys={list(result.keys())}")
+                if "error" in result:
+                    self._log(f"render_ascii_map error: {result['error']}")
+                return []
+
+            ascii_grid = result["ascii"]
+            warps_data = result.get("warps", [])
+            collision_map, warp_points = collision_map_from_ascii(ascii_grid, warps_data)
+
+            # Cache the result
+            self._cached_map_id = state.map_id
+            self._cached_collision_map = collision_map
+            self._cached_warp_points = warp_points
+
+            self._log(f"built collision map from ASCII: {collision_map.width}x{collision_map.height}, "
+                      f"{len(warp_points)} warps")
+
+        # Filter out the warp we arrived from to avoid walking back through it
+        goals = warp_points
+        if self._arrival_warp and self._arrival_warp[0] == state.map_id:
+            ax, ay = self._arrival_warp[1], self._arrival_warp[2]
+            goals = [w for w in warp_points if not (w.x == ax and w.y == ay)]
+            if len(goals) < len(warp_points):
+                self._log(f"excluding arrival warp ({ax},{ay})")
+
+        if not goals:
+            self._log("no warps found (all excluded as arrival warp)")
             return []
 
         # Log warp locations
-        for warp in warp_positions:
+        for warp in goals:
             dist = abs(warp.x - player_pos.x) + abs(warp.y - player_pos.y)
             self._log(f"warp at ({warp.x},{warp.y}), dist={dist}")
 
-        # Build collision map
-        collision_map = await map_reader.read_collision_map()
-        self._log(f"collision map: {collision_map.width}x{collision_map.height}")
+        # Ensure player position is walkable (override stale collision data)
+        collision_map.set_walkable(player_pos.x, player_pos.y)
+
+        # Apply known blocked tiles from failed movement attempts
+        for (map_id, bx, by) in self._blocked_tiles:
+            if map_id == state.map_id:
+                collision_map.set_blocked(bx, by)
 
         # Find path to nearest warp
-        path = find_path_to_nearest(collision_map, player_pos, warp_positions)
+        path = find_path_to_nearest(collision_map, player_pos, goals)
 
         if path:
             self._log(f"path found: {len(path.steps)} steps - {path.steps[:5]}...")
@@ -515,106 +584,24 @@ class Routines:
         Try to find a map exit/warp point.
         Returns the direction to walk, or None if no exit found.
 
-        Uses proper 2D pathfinding when possible, falls back to heuristics.
+        Uses render_ascii_map BFS pathfinding exclusively.
         """
         state = await self.read_state()
 
-        facing_map = {
-            Direction.UP: "up",
-            Direction.DOWN: "down",
-            Direction.LEFT: "left",
-            Direction.RIGHT: "right",
-        }
-
-        # Known stair positions for specific maps (from pokeyellow ROM disassembly)
-        # Format: map_id -> (stair_x, stair_y, direction_to_trigger)
-        # These take priority over WRAM warp data which can be corrupted
-        KNOWN_STAIRS = {
-            38: (7, 1, "up"),  # Player House 2F -> Player House 1F at (7,1), walk UP
-        }
-
-        # Use known positions if available (highest priority)
-        if state.map_id in KNOWN_STAIRS:
-            stair_x, stair_y, trigger_dir = KNOWN_STAIRS[state.map_id]
-            px, py = state.player_x, state.player_y
-            dx = stair_x - px
-            dy = stair_y - py
-
-            self._log(f"using known stairs at ({stair_x},{stair_y}), player at ({px},{py})")
-
-            # If already at stairs, trigger warp
-            if dx == 0 and dy == 0:
-                return trigger_dir
-
-            # Navigate to stairs
-            if abs(dx) > abs(dy):
-                return "right" if dx > 0 else "left"
-            else:
-                return "down" if dy > 0 else "up"
-
-        # Check current tile ahead for warp
+        # Check current tile ahead for warp — if we're already facing one, use it
         if state.tile_ahead in mem.WARP_TILES:
+            facing_map = {
+                Direction.UP: "up",
+                Direction.DOWN: "down",
+                Direction.LEFT: "left",
+                Direction.RIGHT: "right",
+            }
             return facing_map.get(state.facing, "down")
 
-        # Try proper pathfinding (only if no known stairs)
+        # Use ASCII-map-based pathfinding to nearest warp
         path = await self.find_path_to_warp()
         if path:
             return path[0]  # Return first step of the path
-
-        # Check for unreliable warp data (dest_map=0 often indicates corruption)
-        warp_data_reliable = True
-        if state.map_info and state.map_info.warps:
-            for warp in state.map_info.warps:
-                if warp.dest_map == 0:
-                    self._log(f"warp at ({warp.x},{warp.y}) has dest_map=0, data may be unreliable")
-                    warp_data_reliable = False
-                    break
-
-        # Fallback: Use warp locations with simple direction calculation
-        # Only trust warp data if it seems reliable
-        if state.map_info and state.map_info.warps and warp_data_reliable:
-            px, py = state.player_x, state.player_y
-
-            # Find nearest warp by Manhattan distance
-            nearest_warp = None
-            nearest_dist = float('inf')
-
-            for warp in state.map_info.warps:
-                dist = abs(warp.x - px) + abs(warp.y - py)
-                if dist < nearest_dist:
-                    nearest_dist = dist
-                    nearest_warp = warp
-
-            if nearest_warp:
-                dx = nearest_warp.x - px
-                dy = nearest_warp.y - py
-
-                self._log(f"fallback: nearest warp at ({nearest_warp.x},{nearest_warp.y}), delta=({dx},{dy})")
-
-                # Move towards the warp
-                if abs(dy) > abs(dx):
-                    return "down" if dy > 0 else "up"
-                elif abs(dx) > 0:
-                    return "right" if dx > 0 else "left"
-                else:
-                    # On the warp, step down to trigger it
-                    return "down"
-
-        # Generic strategy: explore map edges
-        if state.map_info:
-            px, py = state.player_x, state.player_y
-            width = state.map_info.width * 2  # Convert to tile coords
-            height = state.map_info.height * 2
-
-            # Try moving towards edges in priority order
-            if px < width - 2:
-                return "right"  # Try right edge first (many warps there)
-            if py > 1:
-                return "up"  # Then try top
-            if py < height - 2:
-                return "down"
-            if px > 0:
-                return "left"
 
         return None
 

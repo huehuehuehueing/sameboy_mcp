@@ -96,6 +96,9 @@ class CommandType(Enum):
     # Rendering
     SET_RENDERING_DISABLED = auto()
 
+    # Dashboard
+    DASHBOARD_SNAPSHOT = auto()
+
 
 @dataclass
 class Command:
@@ -128,6 +131,9 @@ class EmulatorThread:
         # Target frame rate (approximately)
         self._target_fps = 59.7
         self._frame_time = 1.0 / self._target_fps
+
+        # Track last frame-advancing command for activity detection
+        self._last_command_frame = 0
 
     def start(self) -> None:
         """Start the emulator thread."""
@@ -235,6 +241,7 @@ class EmulatorThread:
 
                 case CommandType.STEP_FRAME:
                     emu.run_frame()
+                    self._last_command_frame = emu.frame_count
                     return {
                         "success": True,
                         "frame": emu.frame_count,
@@ -301,6 +308,7 @@ class EmulatorThread:
 
                 case CommandType.PRESS_KEY:
                     emu.press_key(args["key"], args.get("frames", 1))
+                    self._last_command_frame = emu.frame_count
                     return {"success": True}
 
                 # Debug
@@ -452,6 +460,20 @@ class EmulatorThread:
                 case CommandType.SET_RENDERING_DISABLED:
                     emu.set_rendering_disabled(args["disabled"])
                     return {"success": True}
+
+                # Dashboard
+                case CommandType.DASHBOARD_SNAPSHOT:
+                    regs = emu.get_registers()
+                    disasm = emu.disassemble(regs["PC"], 10)
+                    status = emu.get_status()
+                    activity = "active" if (emu.frame_count - self._last_command_frame) < 30 else "idle"
+                    return {
+                        "registers": regs,
+                        "disassembly": disasm,
+                        "status": status,
+                        "frame_count": emu.frame_count,
+                        "activity": activity,
+                    }
 
                 case _:
                     return {"error": f"Unknown command type: {cmd.type}"}

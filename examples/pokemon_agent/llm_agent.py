@@ -113,22 +113,32 @@ class LLMToolAgent:
     """LLM agent that uses MCP tools via function calling."""
 
     def __init__(self, config: AgentConfig, call_tool: Callable,
-                 cost_tracker: CostTracker | None = None):
+                 cost_tracker: CostTracker | None = None,
+                 event_sink=None):
         """
         Args:
             config: Agent configuration
             call_tool: Async function to call MCP tools: call_tool(name, args) -> result
             cost_tracker: Optional shared cost tracker instance
+            event_sink: Optional AgentEventSink for dashboard integration
         """
         self.config = config
         self._call_tool = call_tool
         self._verbose = config.verbose
         self.cost_tracker = cost_tracker or CostTracker()
+        self._event_sink = event_sink
 
         # History summarization
         self._max_history = config.max_history
         self._message_history: list[dict] = []  # Persistent history across calls
         self._history_summarized = False
+
+        # LLM availability (set to False on connection errors, retried periodically)
+        self._llm_available = False
+        self._consecutive_errors = 0
+        self._max_consecutive_errors = 3  # Disable after N consecutive failures
+        self._retry_interval = 20  # Re-check every N calls when disabled
+        self._calls_since_disable = 0
 
         # Initialize OpenAI client
         llm_cfg = config.get_llm_config()
@@ -162,15 +172,41 @@ class LLMToolAgent:
         if self._verbose:
             print(f"  [llm-agent] {msg}")
 
+    def check_connection(self) -> bool:
+        """Verify LLM is reachable. Returns True if healthy."""
+        if not self._client:
+            return False
+        try:
+            self._client.models.list()
+            self._llm_available = True
+            self._consecutive_errors = 0
+            return True
+        except Exception as e:
+            self._log(f"LLM connection check failed: {e}")
+            self._llm_available = False
+            return False
+
+    @property
+    def is_available(self) -> bool:
+        return self._llm_available
+
     async def _execute_tool(self, name: str, args: dict) -> Any:
         """Execute an MCP tool and return the result."""
         if name == "report_result":
-            # Special tool - just return the args as the result
+            # Emit decision to dashboard
+            if self._event_sink:
+                self._event_sink.emit_decision(args)
             return args
 
         self._log(f"executing tool: {name}({args})")
         result = await self._call_tool(name, args)
         self._log(f"  result: {str(result)[:200]}")
+
+        # Emit tool call to dashboard
+        if self._event_sink:
+            result_preview = str(result)[:200] if result else None
+            self._event_sink.emit_tool_call(name, args, result_preview)
+
         return result
 
     async def _summarize_history(self):
@@ -250,11 +286,41 @@ class LLMToolAgent:
         """
         if not self._client:
             self._log("no LLM client, returning default")
-            return {"action": "wait", "frames": 60}
+            return {"action": "explore", "direction": "down", "steps": 1,
+                    "_no_llm": True}
+
+        # If LLM was disabled due to errors, periodically retry
+        if not self._llm_available:
+            self._calls_since_disable += 1
+            if self._calls_since_disable < self._retry_interval:
+                return {"action": "explore", "direction": "down", "steps": 1,
+                        "_no_llm": True}
+            # Time to retry
+            self._calls_since_disable = 0
+            if not self.check_connection():
+                print(f"  [llm-agent] still unreachable, will retry in {self._retry_interval} cycles")
+                return {"action": "explore", "direction": "down", "steps": 1,
+                        "_no_llm": True}
+            print(f"  [llm-agent] reconnected!")
 
         # Check if history needs summarization
         if len(self._message_history) >= self._max_history:
             await self._summarize_history()
+
+        # Check for prompt injections from dashboard
+        if self._event_sink:
+            injections = self._event_sink.get_pending_injections()
+            if injections:
+                injection_text = "\n".join(
+                    f"[OPERATOR INSTRUCTION: {inj}]" for inj in injections
+                )
+                user_message = f"{injection_text}\n\n{user_message}"
+                self._log(f"injected {len(injections)} prompt(s)")
+
+        # NOTE: We intentionally do NOT emit the raw user_message to the
+        # dashboard here.  The full strategy_context is verbose internal LLM
+        # prompt text that clutters the agent log.  Compact, human-readable
+        # action lines are emitted by PokemonAgent._log_action() instead.
 
         # Add current context to persistent history
         self._message_history.append({"role": "user", "content": user_message})
@@ -277,8 +343,18 @@ class LLMToolAgent:
                     temperature=0.3,
                 )
             except Exception as e:
-                self._log(f"LLM error: {e}")
-                return {"action": "wait", "frames": 60}
+                self._consecutive_errors += 1
+                self._log(f"LLM error ({self._consecutive_errors}/{self._max_consecutive_errors}): {e}")
+                if self._consecutive_errors >= self._max_consecutive_errors:
+                    self._llm_available = False
+                    self._calls_since_disable = 0
+                    print(f"  [llm-agent] DISABLED after {self._consecutive_errors} consecutive errors. "
+                          f"Will retry in {self._retry_interval} cycles.")
+                return {"action": "explore", "direction": "down", "steps": 1,
+                        "_no_llm": True}
+
+            # Success — reset error counter
+            self._consecutive_errors = 0
 
             # Track cost
             if response.usage:
@@ -325,6 +401,9 @@ class LLMToolAgent:
                     self._message_history.append(
                         {"role": "assistant", "content": message.content}
                     )
+                    # Emit assistant message to dashboard
+                    if self._event_sink:
+                        self._event_sink.emit_llm_message("assistant", message.content[:500])
                 # No tool calls and no useful response - return default
                 return {"action": "wait", "frames": 60}
 

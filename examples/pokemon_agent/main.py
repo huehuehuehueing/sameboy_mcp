@@ -58,13 +58,14 @@ from examples.pokemon_agent.cost_tracker import CostTracker
 class PokemonAgent:
     """Autonomous Pokemon Yellow agent."""
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, event_sink=None):
         self.config = config
         self._session: ClientSession | None = None
         self._client_ctx = None
         self._session_ctx = None
         self._step_count = 0
         self._start_time = 0.0
+        self._event_sink = event_sink
 
         # Cost tracking (shared across all LLM components)
         self._cost_tracker = CostTracker()
@@ -90,6 +91,12 @@ class PokemonAgent:
         self._movement_history: list[tuple[int, int, int, str]] = []  # (map_id, x, y, direction) for backtracking
         self._max_history = 50  # Keep last N movements
         self._initial_spawn_handled = False  # Track if initial spawn sequence was handled
+
+    def _log_action(self, msg: str):
+        """Print a compact action line to console and emit to dashboard."""
+        print(msg)
+        if self._event_sink:
+            self._event_sink.emit_llm_message("agent", msg)
 
     async def call_tool(self, name: str, args: dict):
         """Call an MCP tool and return result."""
@@ -125,6 +132,7 @@ class PokemonAgent:
                 '-m', 'sameboy_mcp.server',
                 '--lib', self.config.lib_path,
                 '--model', self.config.gb_model,
+                '--plugin', 'examples.pokemon_agent.mcp_plugin',
             ]
             if self.config.rom_path:
                 args.extend(['--rom', self.config.rom_path])
@@ -152,10 +160,11 @@ class PokemonAgent:
 
         # Initialize LLM tool agent for MCP-based decisions
         self._llm_agent = LLMToolAgent(self.config, self.call_tool,
-                                       cost_tracker=self._cost_tracker)
+                                       cost_tracker=self._cost_tracker,
+                                       event_sink=self._event_sink)
 
         # Initialize area analyzer for map change detection
-        self._area_analyzer = AreaAnalyzer(self.config, self.call_tool)
+        self._area_analyzer = AreaAnalyzer(self.call_tool)
 
         # Initialize routines with strategy engine for LLM-assisted navigation
         self._routines = Routines(
@@ -193,6 +202,16 @@ class PokemonAgent:
             print(f"ROM: {status.get('rom_title', 'Unknown')}")
             print(f"Model: CGB_E | Frame: {status.get('frame_count', 0)}")
 
+        # Verify render_ascii_map plugin is available
+        tools = await self._session.list_tools()
+        tool_names = {t.name for t in tools.tools}
+        if "render_ascii_map" not in tool_names:
+            print("ERROR: render_ascii_map tool not found!")
+            print("  The Pokemon plugin must be loaded on the MCP server.")
+            print("  If using --server-url, start the server with:")
+            print("    --plugin examples.pokemon_agent.mcp_plugin")
+            raise RuntimeError("Required MCP plugin not loaded: examples.pokemon_agent.mcp_plugin")
+
         # Load saved state if provided
         if self.config.state_path:
             print(f"Loading saved state: {self.config.state_path}")
@@ -205,6 +224,26 @@ class PokemonAgent:
                 self._initial_spawn_handled = True
             else:
                 print(f"  Warning: Failed to load state: {result}")
+
+        # Check LLM connectivity
+        print("Checking LLM connection...")
+        if self._llm_agent.check_connection():
+            print(f"  LLM: OK ({self._llm_agent._model})")
+        else:
+            print(f"  LLM: UNREACHABLE — use dashboard action buttons to control manually")
+
+        # Register dashboard action buttons
+        if self._event_sink:
+            self._event_sink.emit_action_registry([
+                {"id": "find_exit",     "label": "Find Exit",  "group": "navigation"},
+                {"id": "explore_up",    "label": "\u2191",     "group": "explore"},
+                {"id": "explore_down",  "label": "\u2193",     "group": "explore"},
+                {"id": "explore_left",  "label": "\u2190",     "group": "explore"},
+                {"id": "explore_right", "label": "\u2192",     "group": "explore"},
+                {"id": "interact",      "label": "Interact",   "group": "action"},
+                {"id": "press_a",       "label": "A",          "group": "action"},
+                {"id": "press_b",       "label": "B",          "group": "action"},
+            ])
 
         # Run startup ROM analysis
         print("Analyzing ROM...")
@@ -234,19 +273,17 @@ class PokemonAgent:
         - Memory inspection for sprites/NPCs
         - CPU registers and disassembly context
         """
-        print(f"\n{'='*50}")
-        print(f"AREA CHANGE: Entering {state.map_name} (map {state.map_id})")
-        print(f"{'='*50}")
+        self._log_action(f"=== AREA CHANGE: {state.map_name} (map {state.map_id}) ===")
 
         try:
-            # Always use memory-only analysis first (fast, reliable)
+            # Analyze area using render_ascii_map MCP tool
             self._area_data = await self._area_analyzer.analyze_area(state)
 
-            # Optionally enhance with LLM vision analysis if available
-            if self.config.has_vision and self._area_analyzer._client:
-                if self.config.verbose:
-                    print("  Enhancing with vision analysis...")
-                await self._area_analyzer._do_vision_analysis(self._area_data, state)
+            # Invalidate pathfinding cache so next find_exit() re-reads the map
+            self._routines.invalidate_map_cache()
+
+            # Record the warp tile we arrived on so pathfinding doesn't walk back into it
+            self._routines.set_arrival_warp(state.map_id, state.player_x, state.player_y)
 
             # Update tracking
             self._last_analyzed_map_id = state.map_id
@@ -271,6 +308,43 @@ class PokemonAgent:
             print(f"  Area analysis error: {e}")
             self._last_analyzed_map_id = state.map_id  # Still update to avoid retrying
 
+    async def _handle_dashboard_action(self, action_id: str, state) -> bool:
+        """Handle an action triggered from the dashboard. Returns True if handled."""
+        pos = f"({state.player_x},{state.player_y})"
+        match action_id:
+            case "find_exit":
+                self._log_action(f"[dash] {state.map_name} {pos} → find_exit")
+                exit_dir = await self._routines.find_exit()
+                if exit_dir:
+                    self._log_action(f"  exit: {exit_dir}")
+                    await self._routines.walk(exit_dir, 1)
+                else:
+                    self._log_action(f"  no exit found")
+            case "explore_up":
+                self._log_action(f"[dash] {state.map_name} {pos} → walk up")
+                await self._routines.walk("up", 1)
+            case "explore_down":
+                self._log_action(f"[dash] {state.map_name} {pos} → walk down")
+                await self._routines.walk("down", 1)
+            case "explore_left":
+                self._log_action(f"[dash] {state.map_name} {pos} → walk left")
+                await self._routines.walk("left", 1)
+            case "explore_right":
+                self._log_action(f"[dash] {state.map_name} {pos} → walk right")
+                await self._routines.walk("right", 1)
+            case "interact":
+                self._log_action(f"[dash] {state.map_name} {pos} → interact")
+                await self._routines.interact()
+            case "press_a":
+                self._log_action(f"[dash] {state.map_name} {pos} → press A")
+                await self._routines.press("a", 8)
+            case "press_b":
+                self._log_action(f"[dash] {state.map_name} {pos} → press B")
+                await self._routines.press("b", 8)
+            case _:
+                return False
+        return True
+
     async def run_cycle(self) -> bool:
         """
         Run one agent decision cycle.
@@ -280,6 +354,19 @@ class PokemonAgent:
 
         # Read game state
         state = await self._state_reader.read_state()
+
+        # Emit game state to dashboard
+        if self._event_sink:
+            self._event_sink.emit_state({
+                "mode": state.mode.name if state.mode else "UNKNOWN",
+                "map_name": state.map_name,
+                "map_id": state.map_id,
+                "player_x": state.player_x,
+                "player_y": state.player_y,
+                "party_count": state.party_count,
+                "badge_count": state.badge_count,
+                "step": self._step_count,
+            })
 
         # Detect map change and trigger area analysis
         if state.map_id != self._last_analyzed_map_id and state.map_id > 0:
@@ -296,23 +383,25 @@ class PokemonAgent:
                     dist_y = abs(warp.y - state.player_y)
                     print(f"  [warp] ({warp.x},{warp.y}) -> map {warp.dest_map} (dist: {dist_x + dist_y})")
 
+        # Check for pending dashboard actions
+        if self._event_sink:
+            pending = self._event_sink.get_pending_actions()
+            if pending:
+                handled = await self._handle_dashboard_action(pending[0].get("action_id", ""), state)
+                if handled:
+                    await self._routines.wait_frames(self.config.cycle_frames)
+                    return True
+
         # Act based on game mode
         match state.mode:
-            case GameMode.TITLE_SCREEN:
-                print(f"[{self._step_count}] Title screen — pressing Start...")
-                await self._routines.handle_title_screen()
-
-            case GameMode.INTRO:
-                print(f"[{self._step_count}] Intro sequence — skipping...")
-                await self._routines.handle_intro()
-
-            case GameMode.MAIN_MENU:
-                # Check screen text to see options
-                menu_text = ""
-                if state.screen_text and state.screen_text.has_text:
-                    menu_text = state.screen_text.full_text[:50]
-                print(f"[{self._step_count}] Main menu — selecting New Game... ({menu_text})")
-                await self._routines.handle_main_menu(select_new_game=True)
+            case GameMode.TITLE_SCREEN | GameMode.INTRO | GameMode.MAIN_MENU:
+                # Mode detection triggers these incorrectly during gameplay.
+                # TODO: fix _detect_mode to not misidentify these.
+                if self.config.verbose:
+                    self._log_action(f"[{self._step_count}] Spurious {state.mode.name} — A+B")
+                await self._routines.press("a", 6)
+                await self._routines.wait_frames(8)
+                await self._routines.press_b_cancel()
 
             case GameMode.NAME_ENTRY:
                 # Determine if naming player or rival from screen text
@@ -324,7 +413,7 @@ class PokemonAgent:
                     elif "NICKNAME" in text:
                         name_type = "pokemon"
 
-                print(f"[{self._step_count}] Name entry ({name_type}) — entering name...")
+                self._log_action(f"[{self._step_count}] Name entry ({name_type})")
                 # Use default names
                 if name_type == "player":
                     await self._routines.enter_name("ASH")
@@ -358,7 +447,7 @@ class PokemonAgent:
                     for warp in state.map_info.warps:
                         dist = abs(warp.x - state.player_x) + abs(warp.y - state.player_y)
                         if dist == 0:  # On the warp
-                            print(f"[{self._step_count}] On warp at ({warp.x},{warp.y}) - pressing B then down...")
+                            self._log_action(f"[{self._step_count}] On warp ({warp.x},{warp.y}) — B+down")
                             await self._routines.press("b", 6)
                             await self._routines.wait_frames(10)
                             await self._routines.press("down", 16)
@@ -369,7 +458,7 @@ class PokemonAgent:
                 if self._stuck_counter > 15 and state.map_id > 0:
                     # Likely stuck interacting with an object - mark it and move away
                     self._interacted_objects.add(current_pos)
-                    print(f"[{self._step_count}] Stuck on same dialog at ({state.player_x},{state.player_y}) — escaping...")
+                    self._log_action(f"[{self._step_count}] Stuck dialog ({state.player_x},{state.player_y}) — escaping")
 
                     # Press B multiple times to exit any menu/dialog
                     for _ in range(3):
@@ -386,51 +475,44 @@ class PokemonAgent:
                         last_map, last_x, last_y, last_dir = self._movement_history[-1]
                         if last_map == state.map_id:
                             reverse_dir = {"up": "down", "down": "up", "left": "right", "right": "left"}.get(last_dir, "down")
-                            print(f"  backtracking: {reverse_dir}")
+                            self._log_action(f"  backtrack {reverse_dir}")
                             await self._routines.walk(reverse_dir, 1)
 
-                            # Verify movement
                             after_state = await self._state_reader.read_state()
                             if after_state.player_x != before_x or after_state.player_y != before_y:
                                 moved = True
-                                self._movement_history.pop()  # Remove the move we reversed
-                                print(f"  moved to ({after_state.player_x},{after_state.player_y})")
+                                self._movement_history.pop()
+                                self._log_action(f"  → ({after_state.player_x},{after_state.player_y})")
 
                     # If backtracking didn't work, try other directions
                     if not moved:
                         walkable = await self._routines.get_walkable_directions()
                         for direction in walkable:
-                            print(f"  trying: {direction}")
                             await self._routines.walk(direction, 1)
-
-                            # Verify movement
                             after_state = await self._state_reader.read_state()
                             if after_state.player_x != before_x or after_state.player_y != before_y:
                                 moved = True
-                                # Record successful movement
                                 self._movement_history.append((state.map_id, before_x, before_y, direction))
                                 if len(self._movement_history) > self._max_history:
                                     self._movement_history.pop(0)
-                                print(f"  moved to ({after_state.player_x},{after_state.player_y})")
+                                self._log_action(f"  escaped {direction} → ({after_state.player_x},{after_state.player_y})")
                                 break
 
                     if not moved:
-                        print(f"  WARNING: could not move from ({before_x},{before_y}), using escape routine")
+                        self._log_action(f"  truly stuck at ({before_x},{before_y}), escape routine")
                         escaped = await self._routines.escape_stuck_state(self._movement_history)
-                        if escaped:
-                            print(f"  escaped successfully!")
-                        else:
-                            print(f"  escape failed - may be truly stuck")
+                        if not escaped:
+                            self._log_action(f"  escape failed")
 
                     self._stuck_counter = 0
                     self._dialog_counter = 0
                 else:
                     if self.config.verbose:
-                        print(f"[{self._step_count}] Dialog — advancing text...")
+                        self._log_action(f"[{self._step_count}] Dialog — A")
                     await self._routines.advance_text_once()
 
             case GameMode.WHITEOUT:
-                print(f"[{self._step_count}] Whiteout — advancing through text...")
+                self._log_action(f"[{self._step_count}] Whiteout — advancing text")
                 await self._routines.handle_whiteout()
 
             case GameMode.BATTLE:
@@ -461,27 +543,25 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                         names = state.battle.my_pokemon.move_names
                         if 0 <= index < len(names):
                             move_name = names[index]
-                    print(f"[{self._step_count}] Battle: {my_name} vs {enemy_name} → {move_name}")
+                    self._log_action(f"[{self._step_count}] Battle: {my_name} vs {enemy_name} → {move_name}")
                     await self._routines.execute_battle_move(index)
 
                 elif action == "run":
-                    print(f"[{self._step_count}] Battle: {my_name} vs {enemy_name} → RUN!")
+                    self._log_action(f"[{self._step_count}] Battle: {my_name} vs {enemy_name} → RUN!")
                     escaped = await self._routines.run_from_battle()
                     if not escaped:
-                        # If can't escape, just fight
                         await self._routines.execute_battle_move(0)
 
                 elif action == "switch":
-                    print(f"[{self._step_count}] Battle: switching to party mon {index}")
+                    self._log_action(f"[{self._step_count}] Battle: switch to party #{index}")
                     await self._routines.switch_pokemon(index)
 
                 elif action == "item":
-                    print(f"[{self._step_count}] Battle: using item {index}")
+                    self._log_action(f"[{self._step_count}] Battle: use item #{index}")
                     await self._routines.use_item_in_battle(index)
 
                 else:
-                    # Fallback: just use first move
-                    print(f"[{self._step_count}] Battle: fallback → move 0")
+                    self._log_action(f"[{self._step_count}] Battle: fallback → move 0")
                     await self._routines.execute_battle_move(0)
 
             case GameMode.OVERWORLD:
@@ -523,142 +603,24 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                         print(f"[{self._step_count}] Initial spawn complete - player can move freely")
                         self._initial_spawn_handled = True
 
-                # Early game: prioritize finding exits until we have Pokemon
-                if state.party_count == 0:
-                    before_x, before_y = state.player_x, state.player_y
-                    before_map = state.map_id
-                    moved = False
+                # All overworld decisions go through the LLM tool agent
+                # Include area context from analyzer
+                area_context = ""
+                if self._area_analyzer:
+                    area_context = self._area_analyzer.get_area_context_for_llm(
+                        state.map_id, state.player_x, state.player_y
+                    )
 
-                    # First check: are we standing on a warp tile? If so, trigger it
-                    if state.map_info and state.map_info.warps:
-                        for warp in state.map_info.warps:
-                            if warp.x == state.player_x and warp.y == state.player_y:
-                                print(f"[{self._step_count}] Standing on warp at ({warp.x},{warp.y}) → triggering stairs")
-                                warped = await self._routines.trigger_warp("down")
-                                if warped:
-                                    print(f"  warped to new map!")
-                                    return True
-                                else:
-                                    print(f"  warp didn't trigger, trying other directions...")
-                                    # Try other directions for non-standard warps
-                                    for direction in ["up", "left", "right"]:
-                                        warped = await self._routines.trigger_warp(direction)
-                                        if warped:
-                                            print(f"  warped via {direction}!")
-                                            return True
-                                break
+                # Build stuck warning if position hasn't changed
+                stuck_warning = ""
+                if self._stuck_counter >= 3:
+                    stuck_warning = (
+                        f"\n\n*** STUCK at ({state.player_x},{state.player_y}) "
+                        f"for {self._stuck_counter} turns. Try a DIFFERENT direction "
+                        f"to navigate around the obstacle. ***"
+                    )
 
-                    # Use smart navigation if stuck for a while
-                    if self._stuck_counter > 5:
-                        print(f"[{self._step_count}] Stuck at ({state.player_x},{state.player_y}) - using smart navigation...")
-                        success = await self._routines.smart_navigate(
-                            target_type="exit",
-                            max_steps=10,
-                            use_vision=self.config.has_vision,
-                        )
-                        if success:
-                            print(f"  Smart navigation succeeded!")
-                            return True
-                        print(f"  Smart navigation didn't reach exit, continuing...")
-
-                    # Look for exit first (stairs, doors)
-                    exit_dir = await self._routines.find_exit()
-                    if exit_dir:
-                        print(f"[{self._step_count}] {state.map_name} ({state.player_x},{state.player_y}) "
-                              f"→ found exit: {exit_dir}")
-                        success = await self._routines.walk(exit_dir, 1)
-
-                        # Verify movement (position change OR map change)
-                        after_state = await self._state_reader.read_state()
-                        if after_state.map_id != before_map:
-                            # Warped to new map!
-                            print(f"  warped to map {after_state.map_id}!")
-                            return True
-                        if after_state.player_x != before_x or after_state.player_y != before_y:
-                            moved = True
-                            self._movement_history.append((state.map_id, before_x, before_y, exit_dir))
-                            if len(self._movement_history) > self._max_history:
-                                self._movement_history.pop(0)
-                        elif not success:
-                            # Exit direction was blocked, try alternative route
-                            print(f"  blocked! trying alternative directions...")
-                            walkable = await self._routines.get_walkable_directions()
-                            # Remove the direction that was just blocked
-                            if exit_dir in walkable:
-                                walkable.remove(exit_dir)
-                            for alt_dir in walkable:
-                                await self._routines.walk(alt_dir, 1)
-                                new_state = await self._state_reader.read_state()
-                                if new_state.player_x != before_x or new_state.player_y != before_y:
-                                    moved = True
-                                    self._movement_history.append((state.map_id, before_x, before_y, alt_dir))
-                                    if len(self._movement_history) > self._max_history:
-                                        self._movement_history.pop(0)
-                                    print(f"  moved {alt_dir} to ({new_state.player_x},{new_state.player_y})")
-                                    break
-
-                            # If still no movement, try clearing invisible state
-                            if not moved:
-                                # Read raw memory to debug why movement blocked
-                                if self.config.verbose:
-                                    import examples.pokemon_agent.memory_map as mem
-                                    textbox = await self.call_tool("read_memory", {"address": mem.WRAM_TEXTBOX_OPEN, "length": 1})
-                                    script = await self.call_tool("read_memory", {"address": mem.WRAM_SCRIPT_RUNNING, "length": 1})
-                                    ignore = await self.call_tool("read_memory", {"address": mem.WRAM_IGNORE_INPUT_COUNTER, "length": 1})
-                                    joypad = await self.call_tool("read_memory", {"address": mem.WRAM_JOYPAD_SIM_ACTIVE, "length": 1})
-                                    textbox_val = textbox.get("bytes", [0])[0] if isinstance(textbox, dict) else 0
-                                    script_val = script.get("bytes", [0])[0] if isinstance(script, dict) else 0
-                                    ignore_val = ignore.get("bytes", [0])[0] if isinstance(ignore, dict) else 0
-                                    joypad_val = joypad.get("bytes", [0])[0] if isinstance(joypad, dict) else 0
-                                    print(f"  DEBUG: textbox={textbox_val:#x} script={script_val:#x} ignore={ignore_val:#x} joypad={joypad_val:#x}")
-                                print(f"  all directions blocked - clearing potential hidden state...")
-                                for _ in range(3):
-                                    await self._routines.press("a", 6)
-                                    await self._routines.wait_frames(15)
-                                for _ in range(3):
-                                    await self._routines.press("b", 6)
-                                    await self._routines.wait_frames(15)
-                                # Reset stuck counter since we're actively trying to fix it
-                                self._stuck_counter = 0
-
-                    if not moved and not exit_dir:
-                        # Explore to find exit
-                        walkable = await self._routines.get_walkable_directions()
-                        if walkable:
-                            # Prefer directions we haven't tried recently
-                            direction = walkable[self._step_count % len(walkable)]
-                            print(f"[{self._step_count}] {state.map_name} ({state.player_x},{state.player_y}) "
-                                  f"→ exploring {direction}")
-                            await self._routines.walk(direction, 1)
-
-                            # Verify and record movement
-                            after_state = await self._state_reader.read_state()
-                            if after_state.player_x != before_x or after_state.player_y != before_y:
-                                self._movement_history.append((state.map_id, before_x, before_y, direction))
-                                if len(self._movement_history) > self._max_history:
-                                    self._movement_history.pop(0)
-                        else:
-                            print(f"[{self._step_count}] {state.map_name} — no walkable directions, waiting...")
-                            await self._routines.wait_frames(30)
-                else:
-                    # Normal gameplay with party - use LLM tool agent
-                    # Include area context from analyzer
-                    area_context = ""
-                    if self._area_analyzer:
-                        area_context = self._area_analyzer.get_area_context_for_llm(
-                            state.map_id, state.player_x, state.player_y
-                        )
-
-                    # Build stuck warning if position hasn't changed
-                    stuck_warning = ""
-                    if self._stuck_counter >= 3:
-                        stuck_warning = (
-                            f"\n\n*** STUCK at ({state.player_x},{state.player_y}) "
-                            f"for {self._stuck_counter} turns. Try a DIFFERENT direction "
-                            f"to navigate around the obstacle. ***"
-                        )
-
-                    strategy_context = f"""Overworld state:
+                strategy_context = f"""Overworld state:
 Map: {state.map_name} (ID: {state.map_id})
 Position: ({state.player_x}, {state.player_y})
 Party size: {state.party_count}
@@ -670,111 +632,125 @@ Area Analysis:
 
 Use tools to analyze the situation, then call report_result with your action."""
 
-                    decision = await self._llm_agent.run_with_tools(
-                        STRATEGY_SYSTEM_PROMPT,
-                        strategy_context,
-                        max_turns=3,
+                decision = await self._llm_agent.run_with_tools(
+                    STRATEGY_SYSTEM_PROMPT,
+                    strategy_context,
+                    max_turns=3,
+                )
+
+                # When LLM is unavailable, wait for dashboard actions
+                if decision.get("_no_llm"):
+                    self._log_action(
+                        f"[{self._step_count}] {state.map_name} — LLM unavailable, use dashboard actions"
                     )
-                    action = decision.get("action", "explore")
+                    await self._routines.wait_frames(60)
+                    return True
 
-                    if action == "explore":
-                        direction = decision.get("direction", "up")
-                        steps = decision.get("steps", 1)
-                        steps = min(steps, 5)  # Safety limit
+                action = decision.get("action", "explore")
+                reason = decision.get("reasoning", "")
+                pos = f"({state.player_x},{state.player_y})"
 
-                        # Check if direction is walkable first
+                if action == "explore":
+                    direction = decision.get("direction", "up")
+                    steps = decision.get("steps", 1)
+                    steps = min(steps, 5)  # Safety limit
+
+                    # Check if direction is walkable first
+                    walkable = await self._routines.get_walkable_directions()
+                    if direction not in walkable and walkable:
+                        alt_direction = walkable[0]
+                        self._log_action(
+                            f"[{self._step_count}] {state.map_name} {pos}"
+                            f" → {direction} blocked, walk {alt_direction} x{steps}"
+                        )
+                        direction = alt_direction
+                    else:
+                        self._log_action(
+                            f"[{self._step_count}] {state.map_name} {pos}"
+                            f" → walk {direction} x{steps}"
+                        )
+
+                    success = await self._routines.walk(direction, steps)
+                    if not success and walkable:
+                        self._log_action(f"  blocked — exploring around")
+                        await self._routines.explore_area(max_steps=3)
+
+                elif action == "heal":
+                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → heal")
+                    await self._routines.use_pokecenter()
+
+                elif action == "interact":
+                    if current_pos not in self._interacted_objects:
+                        self._log_action(f"[{self._step_count}] {state.map_name} {pos} → interact")
+                        self._interacted_objects.add(current_pos)
+                        await self._routines.interact()
+
+                        if self._area_analyzer:
+                            items_here = self._area_analyzer.get_items_at(
+                                state.map_id, state.player_x, state.player_y
+                            )
+                            for item in items_here:
+                                if not item.collected:
+                                    self._log_action(f"  collected {item.item_name or 'item'}")
+                                    self._area_analyzer.mark_item_collected(
+                                        state.map_id, item.x, item.y
+                                    )
+                    else:
+                        self._log_action(f"[{self._step_count}] {state.map_name} {pos} → already interacted, moving on")
                         walkable = await self._routines.get_walkable_directions()
-                        if direction not in walkable and walkable:
-                            # Use an alternative walkable direction
-                            alt_direction = walkable[0]
-                            print(f"[{self._step_count}] {state.map_name} ({state.player_x},{state.player_y}) "
-                                  f"→ {direction} blocked, trying {alt_direction}")
-                            direction = alt_direction
+                        if walkable:
+                            await self._routines.walk(walkable[0], 1)
 
-                        print(f"[{self._step_count}] {state.map_name} ({state.player_x},{state.player_y}) → walk {direction} x{steps}")
-                        success = await self._routines.walk(direction, steps)
-
-                        if not success and walkable:
-                            # Try to explore in available directions
-                            print(f"  blocked! trying to explore...")
-                            await self._routines.explore_area(max_steps=3)
-
-                    elif action == "heal":
-                        print(f"[{self._step_count}] Heading to Pokecenter to heal...")
-                        await self._routines.use_pokecenter()
-
-                    elif action == "interact":
-                        # Check if we've already interacted with this position
-                        if current_pos not in self._interacted_objects:
-                            print(f"[{self._step_count}] Interacting...")
-                            self._interacted_objects.add(current_pos)
-                            await self._routines.interact()
-
-                            # Check if we collected an item
-                            if self._area_analyzer:
-                                items_here = self._area_analyzer.get_items_at(
-                                    state.map_id, state.player_x, state.player_y
-                                )
-                                for item in items_here:
-                                    if not item.collected:
-                                        print(f"  Collected: {item.item_name or 'item'}")
-                                        self._area_analyzer.mark_item_collected(
-                                            state.map_id, item.x, item.y
-                                        )
+                elif action == "collect_item":
+                    if self._area_analyzer:
+                        nearest = self._area_analyzer.get_nearest_item(
+                            state.map_id, state.player_x, state.player_y
+                        )
+                        if nearest:
+                            item, dist = nearest
+                            self._log_action(
+                                f"[{self._step_count}] {state.map_name} {pos}"
+                                f" → collect {item.item_name or 'item'} at ({item.x},{item.y})"
+                            )
+                            dx = item.x - state.player_x
+                            dy = item.y - state.player_y
+                            if abs(dx) > abs(dy):
+                                await self._routines.walk("right" if dx > 0 else "left", 1)
+                            elif abs(dy) > 0:
+                                await self._routines.walk("down" if dy > 0 else "up", 1)
+                            else:
+                                await self._routines.interact()
+                                self._area_analyzer.mark_item_collected(state.map_id, item.x, item.y)
+                                self._log_action(f"  collected {item.item_name or 'item'}")
                         else:
-                            print(f"[{self._step_count}] Already interacted here, moving on...")
+                            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → no items nearby")
                             walkable = await self._routines.get_walkable_directions()
                             if walkable:
                                 await self._routines.walk(walkable[0], 1)
 
-                    elif action == "collect_item":
-                        # Navigate to and collect a nearby item
-                        if self._area_analyzer:
-                            nearest = self._area_analyzer.get_nearest_item(
-                                state.map_id, state.player_x, state.player_y
-                            )
-                            if nearest:
-                                item, dist = nearest
-                                print(f"[{self._step_count}] Going to collect {item.item_name or 'item'} at ({item.x},{item.y})")
-                                # Simple navigation towards item
-                                dx = item.x - state.player_x
-                                dy = item.y - state.player_y
-                                if abs(dx) > abs(dy):
-                                    await self._routines.walk("right" if dx > 0 else "left", 1)
-                                elif abs(dy) > 0:
-                                    await self._routines.walk("down" if dy > 0 else "up", 1)
-                                else:
-                                    # At item position - interact
-                                    await self._routines.interact()
-                                    self._area_analyzer.mark_item_collected(state.map_id, item.x, item.y)
-                                    print(f"  Collected: {item.item_name or 'item'}")
-                            else:
-                                print(f"[{self._step_count}] No items nearby to collect")
-                                walkable = await self._routines.get_walkable_directions()
-                                if walkable:
-                                    await self._routines.walk(walkable[0], 1)
+                elif action == "wait":
+                    frames = decision.get("frames", 60)
+                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → wait {frames}f")
+                    await self._routines.wait_frames(min(frames, 120))
 
-                    elif action == "wait":
-                        frames = decision.get("frames", 60)
-                        await self._routines.wait_frames(min(frames, 120))
-
-                    elif action == "find_exit":
-                        print(f"[{self._step_count}] Looking for exit...")
-                        exit_dir = await self._routines.find_exit()
-                        if exit_dir:
-                            print(f"  found exit: {exit_dir}")
-                            await self._routines.walk(exit_dir, 1)
-                        else:
-                            await self._routines.explore_area(max_steps=5)
-
+                elif action == "find_exit":
+                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → find_exit")
+                    exit_dir = await self._routines.find_exit()
+                    if exit_dir:
+                        self._log_action(f"  exit: {exit_dir}")
+                        await self._routines.walk(exit_dir, 1)
                     else:
-                        # Default: explore the area
-                        walkable = await self._routines.get_walkable_directions()
-                        if walkable:
-                            direction = walkable[self._step_count % len(walkable)]
-                            await self._routines.walk(direction, 1)
-                        else:
-                            await self._routines.wait_frames(30)
+                        self._log_action(f"  no exit found, exploring")
+                        await self._routines.explore_area(max_steps=5)
+
+                else:
+                    walkable = await self._routines.get_walkable_directions()
+                    if walkable:
+                        direction = walkable[self._step_count % len(walkable)]
+                        self._log_action(f"[{self._step_count}] {state.map_name} {pos} → walk {direction} (fallback)")
+                        await self._routines.walk(direction, 1)
+                    else:
+                        await self._routines.wait_frames(30)
 
             case _:
                 # Unknown mode, press B to try to exit, then wait
@@ -914,6 +890,10 @@ def parse_args():
     state.add_argument("--state", "-s", help="Path to saved state file to load on startup")
     state.add_argument("--save-state", help="Path to save state on exit")
 
+    # Dashboard
+    dash = parser.add_argument_group("Dashboard")
+    dash.add_argument("--dashboard-url", help="Dashboard WebSocket URL (e.g. ws://localhost:8765/dashboard/ws)")
+
     return parser.parse_args()
 
 
@@ -970,8 +950,22 @@ async def main():
         print(f"Error: ROM not found: {config.rom_path}")
         sys.exit(1)
 
+    # Set up dashboard event sink if requested
+    event_sink = None
+    if args.dashboard_url:
+        try:
+            from sameboy_mcp.dashboard.events import RemoteDashboardEventSink
+            event_sink = RemoteDashboardEventSink(args.dashboard_url)
+            if await event_sink.connect():
+                print(f"Dashboard: connected to {args.dashboard_url}")
+            else:
+                print(f"Dashboard: failed to connect (continuing without)")
+                event_sink = None
+        except ImportError:
+            print("Dashboard: websockets package not installed (continuing without)")
+
     # Run agent
-    agent = PokemonAgent(config)
+    agent = PokemonAgent(config, event_sink=event_sink)
     try:
         print("Connecting to SameBoy MCP server...")
         await agent.connect()

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SameBoy Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-title">
+    SameBoy<span id="rom-title">Dashboard</span>
+  </div>
+  <div class="topbar-status">
+    <span id="frame-indicator">F:0</span>
+    <span id="status-text">Connecting&hellip;</span>
+    <span class="status-dot" id="status-dot"></span>
+  </div>
+</div>
+
+<!-- Main Grid -->
+<div class="dashboard">
+
+  <!-- Video -->
+  <div class="panel panel-video">
+    <div class="panel-header">
+      <span class="indicator active" id="video-indicator"></span>
+      Screen
+    </div>
+    <div class="panel-body">
+      <canvas id="game-canvas"></canvas>
+      <span class="fps-counter" id="fps-counter">— fps</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="panel panel-controls">
+    <div class="panel-header">
+      <span class="indicator"></span>
+      Controls
+    </div>
+    <div class="panel-body">
+      <div class="dpad-grid">
+        <div></div>
+        <button class="btn-key" data-key="up">&uarr;</button>
+        <div></div>
+        <button class="btn-key" data-key="left">&larr;</button>
+        <div></div>
+        <button class="btn-key" data-key="right">&rarr;</button>
+        <div></div>
+        <button class="btn-key" data-key="down">&darr;</button>
+        <div></div>
+      </div>
+      <div class="action-buttons">
+        <button class="btn-key" data-key="a">A</button>
+        <button class="btn-key" data-key="b">B</button>
+        <button class="btn-key" data-key="start">Start</button>
+        <button class="btn-key" data-key="select">Sel</button>
+      </div>
+      <div class="agent-actions-section" id="agent-actions-section" style="display:none">
+        <div class="agent-actions-label">Agent Actions</div>
+        <div id="agent-actions-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Registers + Status -->
+  <div class="panel panel-registers">
+    <div class="panel-header">
+      <span class="indicator active"></span>
+      CPU Registers
+    </div>
+    <div class="panel-body" id="registers-body">
+      <div class="register-grid">
+        <div class="register-row"><span class="reg-name">AF</span><span class="reg-value">----</span></div>
+        <div class="register-row"><span class="reg-name">BC</span><span class="reg-value">----</span></div>
+        <div class="register-row"><span class="reg-name">DE</span><span class="reg-value">----</span></div>
+        <div class="register-row"><span class="reg-name">HL</span><span class="reg-value">----</span></div>
+        <div class="register-row"><span class="reg-name">SP</span><span class="reg-value">----</span></div>
+        <div class="register-row"><span class="reg-name">PC</span><span class="reg-value">----</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disassembly -->
+  <div class="panel panel-disasm">
+    <div class="panel-header">
+      <span class="indicator active"></span>
+      Disassembly @ PC
+    </div>
+    <div class="panel-body" id="disasm-body">
+      <div class="disasm-line"><span class="disasm-operands">Waiting for data&hellip;</span></div>
+    </div>
+  </div>
+
+  <!-- LLM Log -->
+  <div class="panel panel-llm">
+    <div class="panel-header">
+      <span class="indicator"></span>
+      Agent Log
+    </div>
+    <div class="panel-body">
+      <div id="llm-messages" class="llm-messages">
+        <div class="llm-msg role-system"><span class="msg-role">sys</span>Dashboard connected. Waiting for agent events&hellip;</div>
+      </div>
+    </div>
+    <div class="prompt-bar">
+      <input type="text" class="prompt-input" id="prompt-input" placeholder="Inject prompt to agent&hellip;">
+      <button class="prompt-send" id="prompt-send">Send</button>
+    </div>
+  </div>
+
+  <!-- Game State -->
+  <div class="panel panel-state">
+    <div class="panel-header">
+      <span class="indicator"></span>
+      State
+    </div>
+    <div class="panel-body" id="state-body">
+      <div id="emu-status" class="state-section">
+        <div class="state-grid">
+          <span class="state-label">State</span><span class="state-value">Waiting&hellip;</span>
+        </div>
+      </div>
+      <div id="game-status" class="state-section"></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="dashboard.js"></script>
+</body>
+</html>

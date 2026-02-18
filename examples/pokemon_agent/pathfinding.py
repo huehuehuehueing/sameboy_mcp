@@ -8,6 +8,7 @@ Uses BFS and A* to find paths through the map, accounting for:
 """
 
 import heapq
+import re
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
@@ -158,6 +159,74 @@ class CollisionMap:
                     row += "#"
             lines.append(row)
         return "\n".join(lines)
+
+
+# Characters in the ASCII grid from render_ascii_map
+_WALKABLE_CHARS = frozenset({'.', 'W', '@', 'G'})
+_NPC_CHARS = frozenset({'N', 'T', 'I'})
+_ROW_PATTERN = re.compile(r'^\s*(\d+):(.*)')
+
+
+def collision_map_from_ascii(
+    ascii_grid: str,
+    warps_data: list[dict] | None = None,
+) -> tuple[CollisionMap, list[Point]]:
+    """Parse an ASCII grid from render_ascii_map into a CollisionMap and warp list.
+
+    Args:
+        ascii_grid: The 'ascii' field from render_ascii_map result.
+        warps_data: The 'warps' list from render_ascii_map result (dicts with x, y keys).
+
+    Returns:
+        (collision_map, warp_points) tuple.
+    """
+    # Parse grid rows (lines matching "NN:chars")
+    rows: list[tuple[int, str]] = []
+    for line in ascii_grid.splitlines():
+        m = _ROW_PATTERN.match(line)
+        if m:
+            rows.append((int(m.group(1)), m.group(2)))
+
+    if not rows:
+        # Fallback: empty 1x1 map
+        cm = CollisionMap(1, 1)
+        return cm, []
+
+    height = max(y for y, _ in rows) + 1
+    width = max(len(content) for _, content in rows)
+
+    cm = CollisionMap(width, height)
+    warp_points: list[Point] = []
+
+    for y, content in rows:
+        for x, ch in enumerate(content):
+            if x >= width:
+                break
+            if ch in _WALKABLE_CHARS:
+                cm.set_walkable(x, y)
+                if ch == 'W':
+                    warp_points.append(Point(x, y))
+            elif ch in _NPC_CHARS:
+                # Underlying tile is walkable but sprite blocks it
+                cm.set_walkable(x, y)
+                cm.add_npc(x, y)
+            else:
+                # '#', 'C', 'B', '!' and anything else → blocked
+                cm.set_blocked(x, y)
+
+    # Also add warps from the structured warps_data (may include warps
+    # on tiles that were overwritten by sprites or player marker)
+    if warps_data:
+        for w in warps_data:
+            wx, wy = w.get("x", -1), w.get("y", -1)
+            if 0 <= wx < width and 0 <= wy < height:
+                p = Point(wx, wy)
+                if p not in warp_points:
+                    warp_points.append(p)
+                # Ensure warp tiles are walkable (they must be traversable)
+                cm.set_walkable(wx, wy)
+
+    return cm, warp_points
 
 
 def find_path(collision_map: CollisionMap, start: Point, goal: Point) -> Optional[Path]:
