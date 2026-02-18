@@ -392,10 +392,14 @@ class MapReader:
                     collision_map.set_blocked(x, y)
 
         # Read the actual collision data
-        # In Pokemon, the current map's blocks are at WRAM_MAP_DATA
-        # Each byte represents a block type
-        map_data_len = width * height
-        map_data = await self._read_bytes(mem.WRAM_MAP_DATA, map_data_len)
+        # wOverworldMap has a 3-block border on all sides. The actual map blocks
+        # are embedded with stride = width + 6, starting at offset 3*stride+3.
+        buf_stride = width + 6
+        map_start = mem.WRAM_MAP_DATA + 3 * buf_stride + 3
+        map_data = []
+        for row in range(height):
+            row_data = await self._read_bytes(map_start + row * buf_stride, width)
+            map_data.extend(row_data)
 
         # Simple heuristic: treat high-valued block IDs as solid
         # This is a simplification - real collision depends on tileset
@@ -414,14 +418,14 @@ class MapReader:
                     for dy in range(2):
                         collision_map.set_blocked(tx + dx, ty + dy)
 
-        # Read sprite/NPC positions and mark them as blocked
+        # Read sprite/NPC positions from wSpriteStateData2 (canonical map coords)
         num_sprites = await self._read_byte(mem.WRAM_NUM_SPRITES)
         for i in range(1, min(num_sprites + 1, 16)):  # Skip sprite 0 (player)
-            base = mem.WRAM_SPRITE_DATA + (i * 16)
+            base = mem.WRAM_SPRITE_DATA_2 + (i * 16)
             sprite_data = await self._read_bytes(base, 16)
-            if len(sprite_data) >= 14:
-                npc_y = sprite_data[mem.SPRITE_MAP_Y]
-                npc_x = sprite_data[mem.SPRITE_MAP_X]
+            if len(sprite_data) >= 6:
+                npc_y = sprite_data[mem.SPRITE2_MAP_Y]
+                npc_x = sprite_data[mem.SPRITE2_MAP_X]
                 if npc_x > 0 and npc_y > 0:  # Valid position
                     collision_map.add_npc(npc_x, npc_y)
 
@@ -487,8 +491,13 @@ class MapReader:
         if width == 0 or height == 0:
             return {}
 
-        map_data_len = width * height
-        map_data = await self._read_bytes(mem.WRAM_MAP_DATA, map_data_len)
+        # wOverworldMap has a 3-block border; read with proper stride
+        buf_stride = width + 6
+        map_start = mem.WRAM_MAP_DATA + 3 * buf_stride + 3
+        map_data = []
+        for row in range(height):
+            row_data = await self._read_bytes(map_start + row * buf_stride, width)
+            map_data.extend(row_data)
 
         tile_map = {}
         for i, block_id in enumerate(map_data):

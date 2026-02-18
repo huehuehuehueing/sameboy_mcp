@@ -22,6 +22,19 @@ WRAM_CUR_MAP_HEIGHT = 0xD367     # Map height in blocks
 WRAM_CUR_MAP_WIDTH = 0xD368      # Map width in blocks
 WRAM_MAP_CONNECTIONS = 0xD36F    # Map connection flags (NSEW)
 WRAM_PLAYER_DIRECTION = 0xD529   # Player facing direction
+
+# Tileset metadata loaded into WRAM at map load time (from wram.asm)
+WRAM_TILESET_BANK = 0xD52A           # ROM bank for current tileset's blockset
+WRAM_TILESET_BLOCKS_PTR = 0xD52B     # 2-byte LE pointer to blockset data in ROM
+WRAM_TILESET_GFX_PTR = 0xD52D        # 2-byte LE pointer to tileset graphics
+WRAM_TILESET_COLLISION_PTR = 0xD52F  # 2-byte LE pointer to collision tile list
+WRAM_TILESET_TALKING_OVER = 0xD531   # 3 bytes: counter tiles
+WRAM_GRASS_TILE = 0xD534             # Grass tile ID for this tileset
+
+# wSpriteStateData2 — canonical map coordinates for non-player sprites
+WRAM_SPRITE_DATA_2 = 0xC200         # wSpriteStateData2 (16 bytes each)
+SPRITE2_MAP_Y = 0x04                # Map Y coordinate in SpriteStateData2
+SPRITE2_MAP_X = 0x05                # Map X coordinate in SpriteStateData2
 WRAM_PLAYER_MOVE_DIR = 0xD527    # Direction player is moving
 WRAM_CUR_MAP_SCRIPT = 0xDA38     # Current map script index
 

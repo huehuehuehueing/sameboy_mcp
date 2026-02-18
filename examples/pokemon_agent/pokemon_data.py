@@ -794,25 +794,33 @@ MAP_NAMES = {
     248: "Summer Beach House",         # $F8
 }
 
-# Tileset names (for tile-pair collision lookup)
+# Tileset names — sequential 0-24 per tileset_headers.asm
 TILESET_NAMES = {
     0x00: "OVERWORLD",
     0x01: "REDS_HOUSE_1",
     0x02: "MART",
     0x03: "FOREST",
-    0x05: "REDS_HOUSE_2",
+    0x04: "REDS_HOUSE_2",
+    0x05: "DOJO",
+    0x06: "POKECENTER",
     0x07: "GYM",
     0x08: "HOUSE",
-    0x09: "CAVERN",
-    0x0E: "UNDERGROUND",
-    0x11: "GATE",
-    0x12: "SHIP",
-    0x14: "LOBBY",
-    0x15: "MANSION",
-    0x16: "SHIP_PORT",
-    0x17: "CEMETERY",
-    0x18: "INTERIOR",
-    0x1D: "PLATEAU",
+    0x09: "FOREST_GATE",
+    0x0A: "MUSEUM",
+    0x0B: "UNDERGROUND",
+    0x0C: "GATE",
+    0x0D: "SHIP",
+    0x0E: "SHIP_PORT",
+    0x0F: "CEMETERY",
+    0x10: "INTERIOR",
+    0x11: "CAVERN",
+    0x12: "LOBBY",
+    0x13: "MANSION",
+    0x14: "LAB",
+    0x15: "CLUB",
+    0x16: "FACILITY",
+    0x17: "PLATEAU",
+    0x18: "BEACH_HOUSE",
 }
 
 
