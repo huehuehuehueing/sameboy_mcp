@@ -91,9 +91,12 @@ class PokemonAgent:
 
         # Autopilot: when True, LLM runs every cycle autonomously.
         # When False, LLM only runs for one-shot prompt injections.
-        # Resume/Stop buttons toggle this. Prompt injections always execute immediately.
+        # Resume/Stop buttons toggle this.
         self._autopilot = False
-        self._pending_injection: str | None = None  # One-shot LLM prompt
+        # Active instruction: persists across cycles as operator context until
+        # the user explicitly stops or sends a new instruction.  This lets
+        # multi-step goals ("grab the potion from the PC") run to completion.
+        self._active_instruction: str | None = None
 
     def _log_action(self, msg: str):
         """Print a compact action line to console and emit to dashboard."""
@@ -520,6 +523,7 @@ class PokemonAgent:
                     # Fall through so the LLM runs this cycle
                 elif action_id == "stop":
                     self._autopilot = False
+                    self._active_instruction = None
                     self._log_action(f"[{self._step_count}] Autopilot OFF — waiting for prompts or dashboard actions")
                     await self._routines.wait_frames(self.config.cycle_frames)
                     return True
@@ -529,15 +533,17 @@ class PokemonAgent:
                         await self._routines.wait_frames(self.config.cycle_frames)
                         return True
 
-            # Prompt injection → execute immediately with LLM this cycle
+            # Prompt injection → set as active instruction and enable autopilot
+            # so the LLM keeps working on this goal across multiple cycles.
             injections = self._event_sink.get_pending_injections()
             if injections:
-                self._pending_injection = " | ".join(injections)
-                self._log_action(f"[{self._step_count}] Prompt received — executing with LLM")
+                self._active_instruction = " | ".join(injections)
+                self._autopilot = True
+                self._log_action(f"[{self._step_count}] Instruction received — LLM engaged")
                 # Fall through to LLM execution below
 
-        # When not on autopilot and no pending injection, wait
-        if not self._autopilot and not self._pending_injection:
+        # When not on autopilot and no active instruction, wait
+        if not self._autopilot and not self._active_instruction:
             if self._step_count % 30 == 0:
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} — waiting (send a prompt or click Resume for autopilot)"
@@ -635,11 +641,10 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                         f"to navigate around the obstacle. ***"
                     )
 
-                # Prepend operator instruction if this is a one-shot prompt
+                # Prepend active instruction (persists across cycles)
                 operator_instruction = ""
-                if self._pending_injection:
-                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._pending_injection}]\nFollow this instruction. Use decode_screen_text and render_ascii_map to understand the current state.\n\n"
-                    self._pending_injection = None  # Consume after use
+                if self._active_instruction:
+                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._active_instruction}]\nFollow this instruction. Use decode_screen_text and render_ascii_map to understand the current state.\n\n"
 
                 strategy_context = f"""{operator_instruction}Overworld state:
 Map: {state.map_name} (ID: {state.map_id})

@@ -420,16 +420,29 @@ class LLMToolAgent:
                         "content": json.dumps(result) if not isinstance(result, str) else result,
                     })
             else:
-                # No tool calls - check if there's content
+                # No tool calls — try to parse text content as a JSON decision
+                # (some models return the decision as text instead of calling report_result)
                 if message.content:
                     self._log(f"LLM response (no tools): {message.content[:200]}")
+                    text = message.content.strip()
+                    try:
+                        parsed = json.loads(text)
+                        if isinstance(parsed, dict) and "action" in parsed:
+                            self._log(f"parsed text as decision: {parsed.get('action')}")
+                            self._message_history.append(
+                                {"role": "assistant", "content": text}
+                            )
+                            if self._event_sink:
+                                self._event_sink.emit_decision(parsed)
+                            return parsed
+                    except (json.JSONDecodeError, ValueError):
+                        pass
                     self._message_history.append(
                         {"role": "assistant", "content": message.content}
                     )
-                    # Emit assistant message to dashboard
                     if self._event_sink:
                         self._event_sink.emit_llm_message("assistant", message.content[:500])
-                # No tool calls and no useful response - return default
+                # No tool calls and no parseable response - return default
                 return {"action": "wait", "frames": 60}
 
         self._log(f"max turns reached without result")
