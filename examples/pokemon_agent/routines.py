@@ -1554,83 +1554,77 @@ class Routines:
         print(f"  [nav-route] FINAL: on map {state.map_id}, wanted {dest_map_id}, reached={reached}")
         return reached
 
-    async def _cross_border(self, direction: str, expected_map_id: int, max_steps: int = 100) -> bool:
-        """Walk to a map border and cross it."""
+    async def _cross_border(self, direction: str, expected_map_id: int) -> bool:
+        """Walk to a map border and cross it.
+
+        Scans the edge of the map for ALL walkable tiles, BFS-finds the
+        nearest reachable one, navigates there, and walks off the edge.
+        """
+        from .pathfinding import find_path_to_nearest, Point
+
         print(f"  [nav-border] _cross_border('{direction}', expected={expected_map_id})")
         state = await self.read_state()
         initial_map = state.map_id
 
-        map_w = (state.map_info.width * 2) if state.map_info else 20
-        map_h = (state.map_info.height * 2) if state.map_info else 18
-        print(f"  [nav-border] map dims: {map_w}x{map_h}, player at ({state.player_x},{state.player_y})")
+        result = await self._get_collision_map()
+        if result is None:
+            print(f"  [nav-border] failed to get collision map")
+            return False
 
-        px, py = state.player_x, state.player_y
-        if direction == "south":
-            target_y = map_h - 1
-            target_x = px
-        elif direction == "north":
-            target_y = 0
-            target_x = px
-        elif direction == "east":
-            target_x = map_w - 1
-            target_y = py
+        collision_map, _, _, _, player_pos, state = result
+        map_w, map_h = collision_map.width, collision_map.height
+        print(f"  [nav-border] map dims: {map_w}x{map_h}, player at ({player_pos.x},{player_pos.y})")
+
+        # Find ALL walkable tiles at the border edge
+        edge_goals: list[Point] = []
+        if direction == "north":
+            edge_goals = [Point(x, 0) for x in range(map_w) if collision_map.is_walkable(x, 0)]
+        elif direction == "south":
+            edge_goals = [Point(x, map_h - 1) for x in range(map_w) if collision_map.is_walkable(x, map_h - 1)]
         elif direction == "west":
-            target_x = 0
-            target_y = py
+            edge_goals = [Point(0, y) for y in range(map_h) if collision_map.is_walkable(0, y)]
+        elif direction == "east":
+            edge_goals = [Point(map_w - 1, y) for y in range(map_h) if collision_map.is_walkable(map_w - 1, y)]
         else:
             print(f"  [nav-border] unknown direction '{direction}'")
             return False
 
-        print(f"  [nav-border] BFS navigate to edge ({target_x},{target_y})")
-        reached = await self.navigate_to(target_x, target_y)
+        print(f"  [nav-border] {len(edge_goals)} walkable edge tiles at {direction} border")
+        if not edge_goals:
+            print(f"  [nav-border] no walkable edge tiles!")
+            return False
+
+        # BFS to nearest reachable edge tile
+        path = find_path_to_nearest(collision_map, player_pos, edge_goals)
+        if path is None:
+            print(f"  [nav-border] BFS found no path to any edge tile")
+            return False
+
+        target = path.positions[-1] if path.positions else player_pos
+        print(f"  [nav-border] nearest reachable edge tile: ({target.x},{target.y}), "
+              f"path={path.length} steps")
+
+        # Navigate to the edge tile
+        reached = await self.navigate_to(target.x, target.y)
         state = await self.read_state()
-        print(f"  [nav-border] after BFS: at ({state.player_x},{state.player_y}), map={state.map_id}, reached={reached}")
         if state.map_id != initial_map:
-            print(f"  [nav-border] map changed during BFS!")
+            print(f"  [nav-border] map changed during navigation to edge!")
             return True
 
-        walk_dir = direction
-        for attempt in range(20):
-            success = await self.walk(walk_dir, 1)
+        print(f"  [nav-border] at ({state.player_x},{state.player_y}), walking {direction} to cross")
+
+        # Walk off the edge to trigger border connection
+        for attempt in range(10):
+            success = await self.walk(direction, 1)
             state = await self.read_state()
-            if attempt < 3 or state.map_id != initial_map:
-                print(f"  [nav-border] walk {walk_dir} attempt {attempt}: pos=({state.player_x},{state.player_y}), map={state.map_id}")
             if state.map_id != initial_map:
                 print(f"  [nav-border] CROSSED border to map {state.map_id}!")
                 return True
             if state.mode == GameMode.BATTLE:
-                print(f"  [nav-border] entered battle, aborting")
+                print(f"  [nav-border] entered battle during crossing")
                 return False
 
-        print(f"  [nav-border] direct walk failed, trying adjacent tiles")
-        state = await self.read_state()
-        px, py = state.player_x, state.player_y
-        offsets = [-1, 1, -2, 2, -3, 3]
-        for offset in offsets:
-            if direction in ("north", "south"):
-                try_x = px + offset
-                try_y = target_y
-            else:
-                try_x = target_x
-                try_y = py + offset
-
-            if try_x < 0 or try_x >= map_w or try_y < 0 or try_y >= map_h:
-                continue
-
-            print(f"  [nav-border] trying alternate ({try_x},{try_y})")
-            reached = await self.navigate_to(try_x, try_y)
-            state = await self.read_state()
-            if state.map_id != initial_map:
-                return True
-
-            for _ in range(5):
-                await self.walk(walk_dir, 1)
-                state = await self.read_state()
-                if state.map_id != initial_map:
-                    print(f"  [nav-border] CROSSED at alternate tile!")
-                    return True
-
-        print(f"  [nav-border] FAILED to cross {direction} border")
+        print(f"  [nav-border] FAILED to cross {direction} border after reaching edge")
         return False
 
     async def _cross_warp(self, expected_map_id: int) -> bool:
