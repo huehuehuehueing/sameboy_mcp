@@ -704,7 +704,13 @@ Call report_result as soon as the dialog closes (blank text_lines)."""
                     await self._routines.wait_frames(60)
                     return True
 
-                await self._execute_overworld_decision(decision, state)
+                # The LLM already handled the dialog/menu via press_and_read
+                # inside run_with_tools — just log the outcome, no extra actions.
+                action = decision.get("action", "?")
+                pos = f"({state.player_x},{state.player_y})"
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos} → {action}"
+                )
 
             case _:
                 # Non-battle/overworld modes (name entry, intro, etc.)
