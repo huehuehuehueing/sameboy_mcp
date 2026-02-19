@@ -749,12 +749,15 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
             rows.append(row_text)
         text_lines = _extract_text_lines(rows)
 
+        # Include player position so the LLM can track movement
+        player_x = _read_byte(emu_thread, WRAM_X_COORD)
+        player_y = _read_byte(emu_thread, WRAM_Y_COORD)
+
         return {
             "key": k,
-            "frames": frames,
-            "wait": wait,
+            "player_x": player_x,
+            "player_y": player_y,
             "text_lines": text_lines,
-            "rows": rows,
         }
 
     # ----------------------------------------------------------

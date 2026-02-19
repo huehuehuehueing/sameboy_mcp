@@ -250,7 +250,10 @@ class LLMToolAgent:
             if len(preview) > 100:
                 preview = preview[:100] + "..."
             prefix = f"[{key}] " if key else ""
-            return f"{prefix}{preview}"
+            pos = ""
+            if "player_x" in result:
+                pos = f" @({result['player_x']},{result['player_y']})"
+            return f"{prefix}{preview}{pos}"
 
         if name == "read_memory":
             addr = result.get("address", "?")
@@ -486,9 +489,11 @@ class LLMToolAgent:
                             warning = (
                                 f"WARNING: {consecutive_blanks} consecutive blank "
                                 f"screen results. Your button presses are having no "
-                                f"visible effect. STOP pressing buttons. Call "
-                                f"render_ascii_map NOW to see your position, then "
-                                f"navigate toward your target using the coordinates."
+                                f"visible effect. Check the player_x, player_y from "
+                                f"your last press_and_read — if your position hasn't "
+                                f"changed, you are ADJACENT to something. Press A to "
+                                f"interact! If you are lost, call render_ascii_map "
+                                f"to see your position and navigate toward your target."
                             )
                             self._log(f"  *** blank screen warning ({consecutive_blanks}x)")
                             messages.append({
@@ -569,6 +574,14 @@ The ASCII map uses (x, y) coordinates. @ marks your position.
 Example: You are @ at (3,5). PC marked C is at (3,2). You need to go UP 3 times (y: 5→4→3→2), then press A.
 Example: NPC marked N is at (5,5). You need to go RIGHT 2 times (x: 3→4→5), then press A.
 To interact with an object, you must be ADJACENT to it and FACING it. Press the direction toward it (to face it), then press A. You do NOT walk onto the object's tile.
+
+STUCK DETECTION (CRITICAL):
+press_and_read returns player_x and player_y. CHECK THESE after every directional press.
+- If position CHANGED → you moved. Keep navigating.
+- If position DID NOT CHANGE → you are BLOCKED in that direction.
+  - If your target (C, N, I, !, B) is in that direction → you are ADJACENT. Press A to interact!
+  - Otherwise → obstacle in the way. Try a different route.
+- NEVER press the same direction more than 2 times if your position isn't changing.
 
 WORKFLOW:
 1. ORIENT: Call render_ascii_map. Note your @ position and the target's position.
