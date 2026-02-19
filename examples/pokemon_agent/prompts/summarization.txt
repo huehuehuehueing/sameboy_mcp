@@ -1,7 +1,24 @@
-Create a brief summary of our conversation so far. Include:
-1. Key game events and milestones reached
-2. Important decisions made
-3. Current objectives
-4. Current location and Pokemon team status
-5. Strategies and plans mentioned
-Be concise - this will replace the full history.
+Summarize the conversation history into a compact game state recap. This will replace the full history, so preserve all important context.
+
+REQUIRED SECTIONS (include ALL of these):
+
+1. LOCATION: Current map name, map ID, and player coordinates.
+2. TEAM: Each Pokemon's species, level, and approximate HP (healthy/injured/critical/fainted).
+3. PROGRESS: Badge count, key story events completed, current objective.
+4. INVENTORY: Notable items (Potions, TMs, key items). Skip mundane items.
+5. RECENT ACTIONS: Last 3-5 significant things that happened (battles won/lost, items obtained, areas entered, NPCs talked to).
+6. ACTIVE PLAN: What the agent was trying to do and any obstacles encountered.
+
+WHAT TO PRESERVE:
+- NPC interactions that gave quest info or items
+- Battles that affected team HP/PP significantly
+- Failed attempts and why they failed (helps avoid repeating mistakes)
+- Operator instructions that are still in effect
+
+WHAT TO DISCARD:
+- Individual movement steps (up, up, left, right...)
+- Repeated A-presses through dialog
+- Memory addresses read and their raw values
+- Tool call details (just keep the outcomes)
+
+Keep the summary under 300 words. Use terse, factual language.

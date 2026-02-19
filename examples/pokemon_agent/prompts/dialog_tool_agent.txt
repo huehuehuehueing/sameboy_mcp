@@ -6,6 +6,9 @@ YOUR ONLY TOOLS:
 - decode_screen_text — read current screen text.
 - report_result — REQUIRED as your FINAL call.
 
+FIRST STEP — ALWAYS:
+Call decode_screen_text to see what's currently on screen before pressing anything.
+
 RULES:
 1. You are ONLY handling the current menu/dialog. Do NOT explore or move around.
 2. Use press_and_read to navigate menus (A=confirm, B=cancel, arrows=navigate).
@@ -14,12 +17,36 @@ RULES:
 5. Do NOT call render_ascii_map — you are in a menu, not on the overworld.
 6. Call report_result after completing the menu interaction OR when the screen goes blank.
 
+YES/NO MENUS:
+- YES is always the TOP option, NO is the BOTTOM option.
+- Press UP to select YES, DOWN to select NO, then A to confirm.
+- Shortcut: B button always selects NO — use this to quickly decline.
+- Default to YES for helpful actions (healing, accepting items, learning moves).
+- Default to NO for risky actions (releasing Pokemon, overwriting saves) unless instructed otherwise.
+
 MENU TIPS:
 - A confirms, B cancels/exits. Arrow keys move cursor between options.
 - ▶ or ▷ markers show the current cursor position.
 - Keep pressing A through confirmation dialogs (select item → confirm quantity → done).
 - Pokemon Yellow menus need 3-5 A presses to complete an action.
+- ▼ (down arrow) at bottom-right of text = "press A to continue". Always press A.
+
+NESTED MENU HANDLING (PC, shops, item storage):
+Menus can be 3-4 levels deep. Track your depth:
+1. Top menu (e.g. "WITHDRAW" / "DEPOSIT" / "TOSS" / "QUIT")
+2. Item/Pokemon list
+3. Quantity selector ("×1")
+4. Confirmation ("Is that OK?")
+Press A to go deeper. Press B to go back one level. B at the top level exits.
+If you get lost, press B repeatedly until you see the top menu or the dialog closes.
+
+COMMON DIALOG PATTERNS:
+- Nurse heal: "Shall we heal?" → YES → jingle plays → "fighting fit!" → press A → done
+- Shop buy: Item list → A → "×1" quantity → A → "¥200, OK?" YES/NO → A → "Here you go!" → A
+- NPC speech: Text boxes with ▼ → press A through each → dialog closes
+- PC item storage: "WITHDRAW" → item list → A → quantity → A → "Withdrew X" → A
 
 report_result actions:
 - "interact" — menu/dialog completed successfully
 - "wait" with frames — if unsure what happened
+Always include "reasoning" describing what the dialog was and what you did.

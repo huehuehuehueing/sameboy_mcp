@@ -383,6 +383,50 @@ class PokemonAgent:
             print(f"  Area analysis error: {e}")
             self._last_analyzed_map_id = state.map_id  # Still update to avoid retrying
 
+    def _build_battle_context(self, state) -> str:
+        """Build a rich battle context string from pre-read game state."""
+        b = state.battle
+        if not b:
+            return "Battle state unavailable. Use read_memory to gather info."
+
+        lines = []
+        battle_type = "Wild" if b.is_wild else "Trainer"
+        lines.append(f"Battle type: {battle_type}")
+        if not b.is_wild and b.enemy_party_count > 0:
+            lines.append(f"Enemy trainer has {b.enemy_party_count} Pokemon total")
+
+        # Your Pokemon
+        my = b.my_pokemon
+        if my:
+            moves_str = ", ".join(
+                f"{name} ({pp}PP)" for name, pp in zip(my.move_names, my.pp) if name != "---"
+            )
+            lines.append(f"\nYour Pokemon: {my.species_name} Lv{my.level}")
+            lines.append(f"  HP: {my.hp}/{my.max_hp} ({my.hp_fraction:.0%})")
+            lines.append(f"  Status: {my.status_name}")
+            lines.append(f"  Stats: ATK={my.attack} DEF={my.defense} SPD={my.speed} SPC={my.special}")
+            lines.append(f"  Moves: {moves_str}")
+            mods = b.my_stat_mods.describe()
+            if mods != "no modifiers":
+                lines.append(f"  Stat stages: {mods}")
+
+        # Enemy Pokemon
+        en = b.enemy_pokemon
+        if en:
+            enemy_moves = ", ".join(n for n in en.move_names if n != "---")
+            lines.append(f"\nEnemy: {en.species_name} Lv{en.level}")
+            lines.append(f"  HP: {en.hp}/{en.max_hp} ({en.hp_fraction:.0%})")
+            lines.append(f"  Status: {en.status_name}")
+            if enemy_moves:
+                lines.append(f"  Known moves: {enemy_moves}")
+            mods = b.enemy_stat_mods.describe()
+            if mods != "no modifiers":
+                lines.append(f"  Stat stages: {mods}")
+
+        lines.append("\nAnalyze type matchups and call report_result with your battle decision.")
+        lines.append("Use read_memory ONLY if you need info not shown above (e.g. exact stat mod values).")
+        return "\n".join(lines)
+
     async def _execute_overworld_decision(self, decision: dict, state) -> None:
         """Execute an LLM overworld decision."""
         action = decision.get("action", "explore")
@@ -618,13 +662,8 @@ class PokemonAgent:
                 my_name = state.battle.my_pokemon.species_name if state.battle and state.battle.my_pokemon else "???"
                 enemy_name = state.battle.enemy_pokemon.species_name if state.battle and state.battle.enemy_pokemon else "???"
 
-                # Build battle context for LLM
-                battle_context = f"""Battle state:
-Your Pokemon: {my_name} Lv{state.battle.my_pokemon.level if state.battle and state.battle.my_pokemon else '?'}
-Enemy: {enemy_name} Lv{state.battle.enemy_pokemon.level if state.battle and state.battle.enemy_pokemon else '?'}
-Battle type: {'Wild' if state.battle and state.battle.is_wild else 'Trainer'}
-
-Use read_memory to check HP and stats, then call report_result with your battle decision."""
+                # Build battle context for LLM with full pre-read data
+                battle_context = self._build_battle_context(state)
 
                 # Use LLM tool agent for battle decisions
                 decision = await self._llm_agent.run_with_tools(
@@ -824,14 +863,22 @@ Use tools to analyze the situation, then call report_result with your action."""
                         f"[OPERATOR INSTRUCTION: {self._active_instruction}]\n\n"
                     )
 
-                dialog_context = f"""{operator_instruction}A dialog or menu is open.
-Use decode_screen_text to see what's on screen, then navigate it.
-Call report_result as soon as the dialog closes (blank text_lines)."""
+                # Provide current screen text so the LLM doesn't waste a
+                # tool call on decode_screen_text just to see what's open.
+                screen_preview = ""
+                if state.screen_text and state.screen_text.has_text:
+                    text_lines = [l for l in state.screen_text.lines if l.strip()]
+                    if text_lines:
+                        screen_preview = "\nCurrent screen text:\n" + "\n".join(text_lines)
+
+                dialog_context = f"""{operator_instruction}A dialog or menu is open on {state.map_name}.{screen_preview}
+
+Navigate it and call report_result when the dialog closes (blank text_lines)."""
 
                 decision = await self._llm_agent.run_with_tools(
                     DIALOG_SYSTEM_PROMPT,
                     dialog_context,
-                    max_turns=15,
+                    max_turns=20,
                 )
                 if self._handle_stopped_decision(decision):
                     return True
