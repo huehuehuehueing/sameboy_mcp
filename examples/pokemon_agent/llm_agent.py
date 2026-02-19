@@ -17,65 +17,63 @@ from .config import AgentConfig
 from .cost_tracker import CostTracker
 
 
-# MCP tools exposed to the LLM as OpenAI functions.
-# NOTE: Only observation tools + report_result are provided.
-# The LLM must NOT press keys or run frames directly — it reports
-# a decision via report_result, and the agent executes it.
-MCP_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "read_memory",
-            "description": "Read bytes from Game Boy memory at a specific address",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "address": {"type": "integer", "description": "Memory address (0x0000-0xFFFF)"},
-                    "length": {"type": "integer", "description": "Number of bytes to read", "default": 1},
+# report_result is a synthetic tool (not on the MCP server) that the LLM
+# calls to return its decision to the agent.
+REPORT_RESULT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "report_result",
+        "description": (
+            "REQUIRED — call this to report your decision. "
+            "You MUST call this before your turns run out."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "move", "run", "switch", "item",
+                        "explore", "heal", "interact", "wait",
+                        "collect_item", "find_exit",
+                    ],
                 },
-                "required": ["address"],
+                "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                "index": {"type": "integer", "description": "Move/item/pokemon index (0-based)"},
+                "steps": {"type": "integer", "description": "Number of steps to take"},
+                "frames": {"type": "integer", "description": "Frames to wait"},
+                "reasoning": {"type": "string", "description": "Brief explanation"},
             },
+            "required": ["action"],
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "decode_screen_text",
-            "description": "Read the current screen tile map and decode it to text using Pokemon Gen 1 character encoding. Returns the on-screen text (dialog boxes, menus, signs). This is the primary way to read what the game is showing.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "render_ascii_map",
-            "description": "Render an ASCII top-down map of the current area. Legend: . = walkable, # = wall/blocked, @ = player, W = warp/door/stairs, G = grass, N = NPC, T = trainer, I = item ball, C = PC, B = bookshelf, ! = sign/interactable. Grid uses (x,y) coordinates shown in column/row headers.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "report_result",
-            "description": "Report the final result/decision back to the agent",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["move", "run", "switch", "item", "explore", "heal", "interact", "wait", "collect_item", "find_exit"],
-                    },
-                    "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
-                    "index": {"type": "integer", "description": "Move/item/pokemon index (0-based)"},
-                    "steps": {"type": "integer", "description": "Number of steps to take"},
-                    "frames": {"type": "integer", "description": "Frames to wait"},
-                    "reasoning": {"type": "string", "description": "Brief explanation"},
-                },
-                "required": ["action"],
+}
+
+
+def mcp_tools_to_openai(mcp_tools) -> list[dict]:
+    """Convert MCP Tool objects to OpenAI function-calling format.
+
+    Args:
+        mcp_tools: List of MCP Tool objects (from session.list_tools().tools)
+
+    Returns:
+        List of OpenAI tool dicts, plus the synthetic report_result tool.
+    """
+    openai_tools = []
+    for tool in mcp_tools:
+        schema = tool.inputSchema or {"type": "object", "properties": {}}
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": schema,
             },
-        },
-    },
-]
+        })
+
+    # Always append the synthetic report_result tool
+    openai_tools.append(REPORT_RESULT_TOOL)
+    return openai_tools
 
 
 class LLMToolAgent:
@@ -96,6 +94,7 @@ class LLMToolAgent:
         self._verbose = config.verbose
         self.cost_tracker = cost_tracker or CostTracker()
         self._event_sink = event_sink
+        self._tools: list[dict] = [REPORT_RESULT_TOOL]  # Set via set_tools()
 
         # History summarization
         self._max_history = config.max_history
@@ -158,6 +157,17 @@ class LLMToolAgent:
     @property
     def is_available(self) -> bool:
         return self._llm_available
+
+    def set_tools(self, openai_tools: list[dict]) -> None:
+        """Set the tools available to the LLM.
+
+        Args:
+            openai_tools: List of OpenAI function-calling tool dicts
+                          (from mcp_tools_to_openai()).
+        """
+        self._tools = openai_tools
+        tool_names = [t["function"]["name"] for t in openai_tools]
+        self._log(f"tools set: {', '.join(tool_names)}")
 
     async def _execute_tool(self, name: str, args: dict) -> Any:
         """Execute an MCP tool and return the result."""
@@ -306,7 +316,7 @@ class LLMToolAgent:
                 response = self._client.chat.completions.create(
                     model=self._model,
                     messages=messages,
-                    tools=MCP_TOOLS,
+                    tools=self._tools,
                     tool_choice="auto",
                     max_tokens=1024,
                     temperature=0.3,
@@ -382,28 +392,34 @@ class LLMToolAgent:
 
 # System prompts for different decision types
 
-BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle AI. Analyze the state and decide.
+BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle AI. You have access to all emulator and game tools.
 
-You can use read_memory to check battle info:
-- 0xD057: Battle type (1=wild, 2=trainer)
-- 0xCFE5: Enemy HP (2 bytes, little-endian)
-- 0xD014: Your active Pokemon HP (2 bytes)
+STRATEGY:
+1. Use decode_screen_text to read the battle menu/options.
+2. Use read_memory if you need HP or stats (e.g. 0xD014 = your HP, 0xCFE5 = enemy HP).
+3. Call report_result with your decision.
 
-You MUST call report_result with your decision. Do NOT skip it.
-- action: "move" with index 0-3 for which move to use
-- action: "run" to flee from wild battles
-- action: "switch" with index 0-5 for party Pokemon
-- action: "item" with index for bag item"""
+CRITICAL: You MUST call report_result. Use at most 2 observation tools, then decide.
 
-STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI. You observe the game state and report a decision. You do NOT control the game directly.
+report_result battle actions:
+- "move" with index 0-3 for which move to use
+- "run" to flee from wild battles
+- "switch" with index 0-5 for party Pokemon
+- "item" with index for bag item"""
 
-WORKFLOW: 1) Read the screen with decode_screen_text. 2) Optionally read the map with render_ascii_map. 3) Call report_result with your decision. That's it — observe then decide.
+STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI. You have access to all emulator and game tools.
 
-CRITICAL: You MUST call report_result before your turns run out. Do not waste turns — call it after 1-2 observation tools.
+STRATEGY — use at most 2-3 tools to observe, then call report_result:
+1. decode_screen_text — read on-screen dialog, menus, signs (use FIRST).
+2. render_ascii_map — see the area layout. Legend: . walkable, # wall, @ player, W warp/door, G grass, N NPC, T trainer, I item, C PC, B bookshelf, ! sign.
+3. read_memory — check specific addresses when needed.
+4. press_key / run_frames — advance dialog or interact when the game needs direct input (e.g. pressing A through text boxes). Use sparingly.
+5. report_result — REQUIRED. Call this with your decision BEFORE turns run out.
 
+You can use ANY available tool, but be efficient. Do not burn turns on unnecessary calls.
 When an operator instruction is present, follow it exactly.
 
-report_result actions:
+report_result overworld actions:
 - "explore" with direction (up/down/left/right) and steps (1-5)
 - "interact" — press A to talk to NPC/object the player is facing
 - "find_exit" — auto-navigate to nearest exit/warp

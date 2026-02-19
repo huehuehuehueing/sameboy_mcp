@@ -50,7 +50,7 @@ from examples.pokemon_agent.game_state import GameStateReader, GameMode
 from examples.pokemon_agent.game_analysis import GameAnalyzer
 from examples.pokemon_agent.routines import Routines
 from examples.pokemon_agent.strategy import StrategyEngine
-from examples.pokemon_agent.llm_agent import LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT
+from examples.pokemon_agent.llm_agent import LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT, mcp_tools_to_openai
 from examples.pokemon_agent.area_analyzer import AreaAnalyzer, AreaData
 from examples.pokemon_agent.cost_tracker import CostTracker
 
@@ -210,15 +210,19 @@ class PokemonAgent:
             print(f"ROM: {status.get('rom_title', 'Unknown')}")
             print(f"Model: CGB_E | Frame: {status.get('frame_count', 0)}")
 
-        # Verify render_ascii_map plugin is available
-        tools = await self._session.list_tools()
-        tool_names = {t.name for t in tools.tools}
+        # Discover all MCP tools and expose them to the LLM agent
+        tools_result = await self._session.list_tools()
+        tool_names = {t.name for t in tools_result.tools}
         if "render_ascii_map" not in tool_names:
             print("ERROR: render_ascii_map tool not found!")
             print("  The Pokemon plugin must be loaded on the MCP server.")
             print("  If using --server-url, start the server with:")
             print("    --plugin examples.pokemon_agent.mcp_plugin")
             raise RuntimeError("Required MCP plugin not loaded: examples.pokemon_agent.mcp_plugin")
+
+        openai_tools = mcp_tools_to_openai(tools_result.tools)
+        self._llm_agent.set_tools(openai_tools)
+        print(f"  MCP tools: {len(tools_result.tools)} discovered → {len(openai_tools)} exposed to LLM")
 
         # Load saved state if provided
         if self.config.state_path:
