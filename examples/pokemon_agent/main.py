@@ -539,7 +539,7 @@ class PokemonAgent:
             if injections:
                 self._active_instruction = " | ".join(injections)
                 self._autopilot = True
-                self._log_action(f"[{self._step_count}] Instruction received — LLM engaged")
+                self._log_action(f"[{self._step_count}] Instruction: {self._active_instruction}")
                 # Fall through to LLM execution below
 
         # When not on autopilot and no active instruction, wait
