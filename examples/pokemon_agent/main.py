@@ -92,6 +92,7 @@ class PokemonAgent:
         # Manual control mode: when a prompt injection is received, pause
         # LLM autonomy and only process dashboard actions until re-engaged.
         self._manual_mode = False
+        self._last_injection: str | None = None  # Replayed on resume
 
     def _log_action(self, msg: str):
         """Print a compact action line to console and emit to dashboard."""
@@ -240,6 +241,7 @@ class PokemonAgent:
         if self._event_sink:
             self._event_sink.emit_action_registry([
                 {"id": "resume",        "label": "Resume LLM", "group": "control"},
+                {"id": "stop",          "label": "Stop LLM",   "group": "control"},
                 {"id": "find_exit",     "label": "Find Exit",  "group": "navigation"},
                 {"id": "explore_up",    "label": "\u2191",     "group": "explore"},
                 {"id": "explore_down",  "label": "\u2193",     "group": "explore"},
@@ -497,33 +499,27 @@ class PokemonAgent:
             pending = self._event_sink.get_pending_actions()
             if pending:
                 action_id = pending[0].get("action_id", "")
-                # "resume" exits manual mode and re-engages the LLM
                 if action_id == "resume":
                     self._manual_mode = False
                     self._log_action(f"[{self._step_count}] LLM re-engaged")
+                    # Fall through so the LLM runs this cycle with the stored injection
+                elif action_id == "stop":
+                    self._manual_mode = True
+                    self._log_action(f"[{self._step_count}] LLM stopped — manual mode")
+                    await self._routines.wait_frames(self.config.cycle_frames)
+                    return True
                 else:
                     handled = await self._handle_dashboard_action(action_id, state)
                     if handled:
                         await self._routines.wait_frames(self.config.cycle_frames)
                         return True
 
-            # Prompt injection → enter manual mode after feeding to LLM
+            # Prompt injection → store it, enter manual mode
             injections = self._event_sink.get_pending_injections()
             if injections:
+                self._last_injection = " | ".join(injections)
                 self._manual_mode = True
-                self._log_action(f"[{self._step_count}] Manual mode — injecting prompt, then pausing LLM")
-                # Feed the injection through one LLM cycle
-                injection_text = " | ".join(injections)
-                if state.mode == GameMode.OVERWORLD:
-                    decision = await self._llm_agent.run_with_tools(
-                        STRATEGY_SYSTEM_PROMPT,
-                        f"[OPERATOR INSTRUCTION: {injection_text}]\n\n"
-                        f"Map: {state.map_name} (ID: {state.map_id})\n"
-                        f"Position: ({state.player_x}, {state.player_y})",
-                        max_turns=3,
-                    )
-                    if not decision.get("_no_llm"):
-                        await self._execute_overworld_decision(decision, state)
+                self._log_action(f"[{self._step_count}] Manual mode — prompt stored, click Resume to execute with LLM")
                 await self._routines.wait_frames(self.config.cycle_frames)
                 return True
 
@@ -626,7 +622,13 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                         f"to navigate around the obstacle. ***"
                     )
 
-                strategy_context = f"""Overworld state:
+                # Prepend stored operator instruction if present
+                operator_instruction = ""
+                if self._last_injection:
+                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._last_injection}]\nFollow this instruction. Use decode_screen_text and render_ascii_map to understand the current state.\n\n"
+                    self._last_injection = None  # Consume after use
+
+                strategy_context = f"""{operator_instruction}Overworld state:
 Map: {state.map_name} (ID: {state.map_id})
 Position: ({state.player_x}, {state.player_y})
 Party size: {state.party_count}

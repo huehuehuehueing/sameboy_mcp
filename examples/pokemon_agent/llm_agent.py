@@ -87,6 +87,22 @@ MCP_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "decode_screen_text",
+            "description": "Read the current screen tile map and decode it to text using Pokemon Gen 1 character encoding. Returns the on-screen text (dialog boxes, menus, signs). This is the primary way to read what the game is showing.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "render_ascii_map",
+            "description": "Render an ASCII top-down map of the current area showing walkable tiles, walls, warps, NPCs, and the player position. Use this to understand the map layout and plan navigation.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "report_result",
             "description": "Report the final result/decision back to the agent",
             "parameters": {
@@ -430,28 +446,24 @@ Always call report_result to provide your final decision."""
 
 STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI deciding what to do in the overworld.
 
-You can use tools to read game memory and analyze the situation:
-- read_memory: Check game state (map ID at 0xD35E, player X at 0xD361, player Y at 0xD362)
-- capture_screen: See what's on screen
-- get_registers: Get CPU state
+KEY TOOLS — use these to understand the game state:
+- decode_screen_text: READ THE SCREEN first. Shows dialog, menus, signs.
+- render_ascii_map: See the full area map with walls, warps, NPCs, player.
+- read_memory: Check specific memory addresses when needed.
+- capture_screen: Visual screenshot (use decode_screen_text instead when possible).
 
-The Area Analysis section in the context tells you about:
-- NPCs nearby (including TRAINERS you might need to battle)
-- Items you can collect
-- Exits/warps from this area
+The Area Analysis in context tells you about NPCs, items, and exits.
+
+IMPORTANT: When an operator instruction is present, follow it exactly.
+Use decode_screen_text and render_ascii_map to understand the game state
+before deciding. Do NOT guess — read the screen.
 
 After analyzing, call report_result with your decision:
-- action: "explore" with direction (up/down/left/right) and steps - walk around
-- action: "collect_item" - go pick up the nearest item
-- action: "find_exit" - navigate towards an exit/warp
-- action: "heal" to go to Pokecenter
-- action: "interact" to talk to NPC/object in front
+- action: "explore" with direction (up/down/left/right) and steps
+- action: "collect_item" - pick up the nearest item
+- action: "find_exit" - auto-navigate to nearest exit/warp
+- action: "heal" - go to Pokecenter
+- action: "interact" - talk to NPC/object in front
 - action: "wait" with frames to pause
-
-Priority suggestions:
-1. If low HP, consider healing
-2. If items nearby, consider collecting them
-3. If you see trainers, prepare for battle or find alternate route
-4. Explore new areas to progress
 
 Always call report_result to provide your final decision."""
