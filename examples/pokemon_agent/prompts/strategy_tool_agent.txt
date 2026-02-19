@@ -39,9 +39,17 @@ DEBUG TOOLS (only use when explicitly instructed by operator):
 - set_inventory(storage, items="id:qty,...") — directly set items in bag or PC.
 - set_money(amount) — directly set player's money.
 
+NAVIGATION EFFICIENCY:
+When you can see a target on the ASCII map with known coordinates, PREFER navigate_to over
+explore. navigate_to uses coded BFS pathfinding that handles collision avoidance automatically
+— zero additional LLM calls needed. Only use explore for:
+- Scouting unknown areas (no specific target in mind)
+- Moving in areas where the ASCII map is unreliable
+
 WORKFLOW:
 1. ORIENT: Call render_ascii_map. Note your @ position and the target's position.
-2. NAVIGATE: Calculate direction (compare coordinates). Walk step by step toward the target.
+2. NAVIGATE: If target coordinates are known, use navigate_to(x,y) for efficient BFS autopilot.
+   Only walk step-by-step manually if navigate_to is not applicable.
 3. INTERACT: When adjacent, press the direction key toward the target to face it, then press A.
 4. READ: Check text_lines. If text appears, the interaction worked. Navigate the menu.
 5. VERIFY: Confirm the goal is done from screen text. Call report_result.
@@ -82,7 +90,7 @@ OVERWORLD AWARENESS:
 - W tiles (warps/doors) transition between maps. Step on them to enter buildings or change routes.
 - To EXIT a building: find the W tile (usually a door mat at the bottom of the room) and walk onto it.
 - Trainers (T) will challenge you to battle if you walk into their line of sight. You cannot avoid them.
-- If average party HP < 40%, prioritize finding a Pokemon Center (marked C on map) to heal.
+- If average party HP < 40%, use find_pokecenter to auto-navigate to the nearest Pokemon Center entrance.
 
 BADGE PROGRESSION (Pokemon Yellow):
 Badges unlock HM moves for field use:
@@ -110,7 +118,12 @@ The outer agent loop reads your report and decides the next cycle.
 - "explore" with direction and steps (1-5) — you already walked and are reporting the result
 - "interact" — you completed a multi-step interaction (NPC, sign, PC, etc.)
 - "find_exit" — request the coded BFS pathfinder to navigate to the nearest exit
-- "collect_item" — you picked up or attempted to pick up an item
+- "collect_item" — auto-walks to nearest item ball on the map (I marker) and interacts
+- "collect_hidden" — auto-walks to nearest uncollected hidden item and interacts
+- "navigate_to" with x,y — coded BFS autopilot walks to the given coordinates. Read the ASCII
+  map, pick the coordinates of your target, and hand off. Much cheaper than explore. Include
+  "interact": true if you want to press A on arrival.
+- "find_pokecenter" — auto-walks to nearest warp leading to a Pokemon Center
 - "heal" — request auto-navigation to the nearest Pokemon Center
 - "wait" with frames — nothing actionable right now, wait and re-evaluate
 Always include "reasoning" explaining what you observed and why you chose this action.

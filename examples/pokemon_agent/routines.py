@@ -31,6 +31,8 @@ class Routines:
         self._cached_map_id: int = -1
         self._cached_collision_map = None  # CollisionMap
         self._cached_warp_points: list = []  # list[Point]
+        self._cached_entity_points: dict = {}  # dict[str, list[Point]]
+        self._cached_warps_data: list = []  # raw warps data from render_ascii_map
         # Warp we arrived from — excluded from pathfinding targets to avoid loops
         self._arrival_warp: tuple[int, int, int] | None = None  # (map_id, x, y)
 
@@ -527,6 +529,8 @@ class Routines:
         self._cached_map_id = -1
         self._cached_collision_map = None
         self._cached_warp_points = []
+        self._cached_entity_points = {}
+        self._cached_warps_data = []
 
     def set_arrival_warp(self, map_id: int, x: int, y: int):
         """Record which warp tile we arrived on after a map change.
@@ -536,6 +540,70 @@ class Routines:
         """
         self._arrival_warp = (map_id, x, y)
         self._log(f"arrival warp set: map {map_id} ({x},{y})")
+
+    async def _get_collision_map(self):
+        """Build or return cached collision map, warp points, entity points, and player position.
+
+        Returns a *working copy* of the collision map so callers can safely mutate it
+        (e.g. marking blocked tiles) without corrupting the cache.
+
+        Returns:
+            (collision_map, warp_points, entity_points, warps_data, player_pos, state) or None on failure.
+        """
+        import copy
+        from .pathfinding import collision_map_from_ascii, CollisionMap, Point
+
+        state = await self.read_state()
+        player_pos = Point(state.player_x, state.player_y)
+
+        # Use cached collision map if map hasn't changed
+        if self._cached_map_id == state.map_id and self._cached_collision_map is not None:
+            self._log(f"using cached collision map for map {state.map_id}")
+        else:
+            # Call render_ascii_map MCP tool
+            try:
+                result = await self._call("render_ascii_map", {"include_legend": False})
+            except Exception as e:
+                self._log(f"render_ascii_map call failed: {e}")
+                return None
+
+            if not isinstance(result, dict):
+                self._log(f"render_ascii_map: expected dict, got {type(result).__name__}: "
+                          f"{repr(result)[:300]}")
+                return None
+
+            if "ascii" not in result:
+                self._log(f"render_ascii_map: 'ascii' key missing, keys={list(result.keys())}")
+                if "error" in result:
+                    self._log(f"render_ascii_map error: {result['error']}")
+                return None
+
+            ascii_grid = result["ascii"]
+            warps_data = result.get("warps", [])
+            collision_map, warp_points, entity_points = collision_map_from_ascii(ascii_grid, warps_data)
+
+            # Cache the result
+            self._cached_map_id = state.map_id
+            self._cached_collision_map = collision_map
+            self._cached_warp_points = warp_points
+            self._cached_entity_points = entity_points
+            self._cached_warps_data = warps_data
+
+            self._log(f"built collision map from ASCII: {collision_map.width}x{collision_map.height}, "
+                      f"{len(warp_points)} warps")
+
+        # Return a working copy so mutations don't corrupt the cache
+        cm = CollisionMap(self._cached_collision_map.width, self._cached_collision_map.height)
+        cm._grid = [row[:] for row in self._cached_collision_map._grid]
+        cm._npcs = set(self._cached_collision_map._npcs)
+
+        # Apply per-call overlays on the copy
+        cm.set_walkable(player_pos.x, player_pos.y)
+        for (map_id, bx, by) in self._blocked_tiles:
+            if map_id == state.map_id:
+                cm.set_blocked(bx, by)
+
+        return cm, self._cached_warp_points, self._cached_entity_points, self._cached_warps_data, player_pos, state
 
     async def find_path_to_warp(self) -> list[str]:
         """
@@ -547,47 +615,13 @@ class Routines:
             List of directions ["down", "left", etc.] to reach the warp,
             or empty list if no path found.
         """
-        from .pathfinding import collision_map_from_ascii, find_path_to_nearest, Point
+        from .pathfinding import find_path_to_nearest
 
-        # Read current state for player position + map_id
-        state = await self.read_state()
-        player_pos = Point(state.player_x, state.player_y)
+        result = await self._get_collision_map()
+        if result is None:
+            return []
 
-        # Use cached collision map if map hasn't changed
-        if self._cached_map_id == state.map_id and self._cached_collision_map is not None:
-            collision_map = self._cached_collision_map
-            warp_points = self._cached_warp_points
-            self._log(f"using cached collision map for map {state.map_id}")
-        else:
-            # Call render_ascii_map MCP tool
-            try:
-                result = await self._call("render_ascii_map", {"include_legend": False})
-            except Exception as e:
-                self._log(f"render_ascii_map call failed: {e}")
-                return []
-
-            if not isinstance(result, dict):
-                self._log(f"render_ascii_map: expected dict, got {type(result).__name__}: "
-                          f"{repr(result)[:300]}")
-                return []
-
-            if "ascii" not in result:
-                self._log(f"render_ascii_map: 'ascii' key missing, keys={list(result.keys())}")
-                if "error" in result:
-                    self._log(f"render_ascii_map error: {result['error']}")
-                return []
-
-            ascii_grid = result["ascii"]
-            warps_data = result.get("warps", [])
-            collision_map, warp_points = collision_map_from_ascii(ascii_grid, warps_data)
-
-            # Cache the result
-            self._cached_map_id = state.map_id
-            self._cached_collision_map = collision_map
-            self._cached_warp_points = warp_points
-
-            self._log(f"built collision map from ASCII: {collision_map.width}x{collision_map.height}, "
-                      f"{len(warp_points)} warps")
+        collision_map, warp_points, entity_points, warps_data, player_pos, state = result
 
         # Filter out the warp we arrived from to avoid walking back through it
         goals = warp_points
@@ -605,14 +639,6 @@ class Routines:
         for warp in goals:
             dist = abs(warp.x - player_pos.x) + abs(warp.y - player_pos.y)
             self._log(f"warp at ({warp.x},{warp.y}), dist={dist}")
-
-        # Ensure player position is walkable (override stale collision data)
-        collision_map.set_walkable(player_pos.x, player_pos.y)
-
-        # Apply known blocked tiles from failed movement attempts
-        for (map_id, bx, by) in self._blocked_tiles:
-            if map_id == state.map_id:
-                collision_map.set_blocked(bx, by)
 
         # Find path to nearest warp
         path = find_path_to_nearest(collision_map, player_pos, goals)
@@ -649,6 +675,289 @@ class Routines:
             return path[0]  # Return first step of the path
 
         return None
+
+    async def navigate_to(
+        self,
+        target_x: int,
+        target_y: int,
+        interact: bool = False,
+        margin: float = 0.2,
+    ) -> bool:
+        """
+        BFS-walk to arbitrary (target_x, target_y) coordinates.
+
+        Args:
+            target_x: Target x coordinate (from ASCII map).
+            target_y: Target y coordinate (from ASCII map).
+            interact: If True, press A when adjacent to the target.
+            margin: Safety margin over BFS path length (0.2 = 20%).
+
+        Returns:
+            True if player reached the target (or adjacent for interact).
+        """
+        import math
+        from .pathfinding import find_path, find_path_to_nearest, Point
+
+        self._log(f"navigate_to({target_x},{target_y}) interact={interact}")
+
+        result = await self._get_collision_map()
+        if result is None:
+            self._log("navigate_to: failed to get collision map")
+            return False
+
+        collision_map, warp_points, entity_points, warps_data, player_pos, state = result
+        initial_map = state.map_id
+
+        target = Point(target_x, target_y)
+
+        # For interact mode, we need to reach an adjacent tile, not the target itself
+        if interact and not collision_map.is_walkable(target_x, target_y):
+            # Target is blocked (e.g. NPC, PC counter) — find path to nearest adjacent tile
+            adjacent = []
+            for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                ax, ay = target_x + dx, target_y + dy
+                if collision_map.is_walkable(ax, ay):
+                    adjacent.append(Point(ax, ay))
+            if not adjacent:
+                self._log(f"navigate_to: no walkable tile adjacent to ({target_x},{target_y})")
+                return False
+            path = find_path_to_nearest(collision_map, player_pos, adjacent)
+        else:
+            path = find_path(collision_map, player_pos, target)
+
+        if path is None:
+            self._log(f"navigate_to: no path found to ({target_x},{target_y})")
+            return False
+
+        if path.length == 0:
+            self._log(f"navigate_to: already at target")
+            if interact:
+                await self.interact()
+            return True
+
+        # Dynamic max_steps from BFS path length + margin
+        max_steps = math.ceil(path.length * (1 + margin)) + 2  # +2 for rounding safety
+        self._log(f"navigate_to: path={path.length} steps, budget={max_steps}")
+
+        steps_taken = 0
+        step_idx = 0  # Current index into path.steps
+
+        while steps_taken < max_steps:
+            # Check for map change (unexpected warp)
+            current_state = await self.read_state()
+            if current_state.map_id != initial_map:
+                self._log(f"navigate_to: map changed {initial_map} -> {current_state.map_id}")
+                return False
+
+            # Check for battle
+            if current_state.mode == GameMode.BATTLE:
+                self._log("navigate_to: entered battle")
+                return False
+
+            current_pos = Point(current_state.player_x, current_state.player_y)
+
+            # Check if we reached the target (or adjacent for interact)
+            if not interact and current_pos == target:
+                self._log(f"navigate_to: reached target ({target_x},{target_y})")
+                return True
+
+            if interact:
+                dist = abs(current_pos.x - target_x) + abs(current_pos.y - target_y)
+                if dist == 0:
+                    # Standing on the target tile (walkable target) — just interact
+                    self._log(f"navigate_to: standing on target, interacting")
+                    await self.interact()
+                    return True
+                if dist == 1:
+                    self._log(f"navigate_to: adjacent to target, interacting")
+                    # Face the target direction
+                    dx = target_x - current_pos.x
+                    dy = target_y - current_pos.y
+                    if abs(dx) >= abs(dy):
+                        face_dir = "right" if dx > 0 else "left"
+                    else:
+                        face_dir = "down" if dy > 0 else "up"
+                    await self.face_direction(face_dir)
+                    await self.interact()
+                    return True
+
+            # If we've exhausted the pre-computed path, recompute
+            if step_idx >= len(path.steps):
+                self._log("navigate_to: recomputing path from current position")
+                # Invalidate cache to get fresh map data
+                self.invalidate_map_cache()
+                result = await self._get_collision_map()
+                if result is None:
+                    return False
+                collision_map, _, _, _, _, _ = result
+
+                if interact and not collision_map.is_walkable(target_x, target_y):
+                    adjacent = []
+                    for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                        ax, ay = target_x + dx, target_y + dy
+                        if collision_map.is_walkable(ax, ay):
+                            adjacent.append(Point(ax, ay))
+                    if not adjacent:
+                        return False
+                    path = find_path_to_nearest(collision_map, current_pos, adjacent)
+                else:
+                    path = find_path(collision_map, current_pos, target)
+
+                if path is None or path.length == 0:
+                    self._log("navigate_to: recomputed path is empty or None")
+                    if interact and abs(current_pos.x - target_x) + abs(current_pos.y - target_y) <= 1:
+                        await self.interact()
+                        return True
+                    return path is not None and path.length == 0
+                step_idx = 0
+                # Extend budget if recomputed path requires more steps
+                needed = steps_taken + math.ceil(path.length * (1 + margin)) + 2
+                if needed > max_steps:
+                    self._log(f"navigate_to: extending budget {max_steps} -> {needed}")
+                    max_steps = needed
+
+            direction = path.steps[step_idx]
+            before_state = await self.read_state()
+            success = await self.walk(direction, 1)
+            steps_taken += 1
+
+            if success:
+                step_idx += 1
+            else:
+                # Retry once — handles transient blockers like the Pikachu follower
+                # which moves out of the way after one failed attempt
+                success = await self.walk(direction, 1)
+                steps_taken += 1
+                if success:
+                    step_idx += 1
+                    continue
+
+                # Permanently blocked — mark tile and recompute
+                dx = {"left": -1, "right": 1}.get(direction, 0)
+                dy = {"up": -1, "down": 1}.get(direction, 0)
+                blocked_x = before_state.player_x + dx
+                blocked_y = before_state.player_y + dy
+                self._blocked_tiles.add((initial_map, blocked_x, blocked_y))
+                self._log(f"navigate_to: blocked at ({blocked_x},{blocked_y}), recomputing")
+
+                # Force recompute on next iteration
+                self.invalidate_map_cache()
+                result = await self._get_collision_map()
+                if result is None:
+                    return False
+                collision_map, _, _, _, _, _ = result
+                collision_map.set_blocked(blocked_x, blocked_y)
+
+                current_pos = Point(before_state.player_x, before_state.player_y)
+                if interact and not collision_map.is_walkable(target_x, target_y):
+                    adjacent = []
+                    for ddx, ddy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
+                        ax, ay = target_x + ddx, target_y + ddy
+                        if collision_map.is_walkable(ax, ay):
+                            adjacent.append(Point(ax, ay))
+                    if not adjacent:
+                        return False
+                    path = find_path_to_nearest(collision_map, current_pos, adjacent)
+                else:
+                    path = find_path(collision_map, current_pos, target)
+
+                if path is None:
+                    self._log("navigate_to: no path after recompute")
+                    return False
+                step_idx = 0
+                # Extend budget if detour path requires more steps
+                needed = steps_taken + math.ceil(path.length * (1 + margin)) + 2
+                if needed > max_steps:
+                    self._log(f"navigate_to: extending budget {max_steps} -> {needed}")
+                    max_steps = needed
+
+        self._log(f"navigate_to: budget exhausted after {steps_taken} steps")
+        return False
+
+    async def navigate_to_target(self, target: str) -> bool:
+        """
+        Navigate to a named target using BFS pathfinding.
+
+        Args:
+            target: Target type — "item", "npc", "trainer", "pc",
+                    "warp", "hidden_item", "pokecenter".
+
+        Returns:
+            True if target was reached.
+        """
+        from .pathfinding import find_path_to_nearest, Point
+
+        self._log(f"navigate_to_target({target})")
+
+        if target == "warp":
+            # Delegate to existing find_path_to_warp flow
+            return await self.navigate_to_exit()
+
+        result = await self._get_collision_map()
+        if result is None:
+            self._log("navigate_to_target: failed to get collision map")
+            return False
+
+        collision_map, warp_points, entity_points, warps_data, player_pos, state = result
+
+        goals: list[Point] = []
+        interact = False
+
+        if target == "item":
+            goals = entity_points.get("I", [])
+            interact = True
+        elif target == "npc":
+            goals = entity_points.get("N", [])
+            interact = True
+        elif target == "trainer":
+            goals = entity_points.get("T", [])
+            interact = True
+        elif target == "pc":
+            goals = entity_points.get("C", [])
+            interact = True
+        elif target == "hidden_item":
+            # Use get_area_info for hidden items
+            try:
+                area_info = await self._call("get_area_info", {"include_hidden_items": True})
+                if isinstance(area_info, dict):
+                    hidden = area_info.get("hidden_items", [])
+                    for h in hidden:
+                        hx, hy = h.get("x", -1), h.get("y", -1)
+                        if hx >= 0 and hy >= 0:
+                            goals.append(Point(hx, hy))
+            except Exception as e:
+                self._log(f"navigate_to_target: get_area_info failed: {e}")
+            interact = True
+        elif target == "pokecenter":
+            from .pokemon_data import POKECENTER_MAP_IDS
+            # Find warps whose dest_map is a Pokecenter
+            for w in warps_data:
+                dest_map = w.get("dest_map", -1)
+                if dest_map in POKECENTER_MAP_IDS:
+                    wx, wy = w.get("x", -1), w.get("y", -1)
+                    if wx >= 0 and wy >= 0:
+                        goals.append(Point(wx, wy))
+                        self._log(f"pokecenter warp at ({wx},{wy}) -> map {dest_map}")
+            interact = False  # Walk onto warp tile, don't press A
+        else:
+            self._log(f"navigate_to_target: unknown target type '{target}'")
+            return False
+
+        if not goals:
+            self._log(f"navigate_to_target: no {target} found on current map")
+            return False
+
+        # Find nearest goal
+        nearest = None
+        nearest_dist = float("inf")
+        for g in goals:
+            dist = abs(g.x - player_pos.x) + abs(g.y - player_pos.y)
+            if dist < nearest_dist:
+                nearest_dist = dist
+                nearest = g
+
+        self._log(f"navigate_to_target: nearest {target} at ({nearest.x},{nearest.y}), dist={nearest_dist}")
+        return await self.navigate_to(nearest.x, nearest.y, interact=interact)
 
     async def navigate_to_exit(self, max_attempts: int = 20) -> bool:
         """
@@ -782,6 +1091,7 @@ class Routines:
         self._log(f"failed to reach {target_type} after {steps_taken} steps")
         return False
 
+    # XXX: verify this is not producing lossy information vs the expanded ascii map
     async def _build_map_ascii(self, state: GameState) -> str:
         """Build a simple ASCII representation of the current map area."""
         # Get map dimensions
@@ -789,6 +1099,7 @@ class Routines:
         height = state.map_info.height * 2 if state.map_info else 8
 
         # Limit size for LLM context
+        # XXX: verify this does not cause lossy compression of the map
         width = min(width, 16)
         height = min(height, 16)
 

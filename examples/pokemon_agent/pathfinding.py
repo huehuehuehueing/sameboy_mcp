@@ -170,15 +170,17 @@ _ROW_PATTERN = re.compile(r'^\s*(\d+):(.*)')
 def collision_map_from_ascii(
     ascii_grid: str,
     warps_data: list[dict] | None = None,
-) -> tuple[CollisionMap, list[Point]]:
-    """Parse an ASCII grid from render_ascii_map into a CollisionMap and warp list.
+) -> tuple[CollisionMap, list[Point], dict[str, list[Point]]]:
+    """Parse an ASCII grid from render_ascii_map into a CollisionMap, warp list, and entity points.
 
     Args:
         ascii_grid: The 'ascii' field from render_ascii_map result.
         warps_data: The 'warps' list from render_ascii_map result (dicts with x, y keys).
 
     Returns:
-        (collision_map, warp_points) tuple.
+        (collision_map, warp_points, entity_points) tuple.
+        entity_points maps ASCII chars to lists of Point: "I" (items), "N" (npcs),
+        "T" (trainers), "C" (PCs/counters).
     """
     # Parse grid rows (lines matching "NN:chars")
     rows: list[tuple[int, str]] = []
@@ -190,13 +192,14 @@ def collision_map_from_ascii(
     if not rows:
         # Fallback: empty 1x1 map
         cm = CollisionMap(1, 1)
-        return cm, []
+        return cm, [], {}
 
     height = max(y for y, _ in rows) + 1
     width = max(len(content) for _, content in rows)
 
     cm = CollisionMap(width, height)
     warp_points: list[Point] = []
+    entity_points: dict[str, list[Point]] = {"I": [], "N": [], "T": [], "C": []}
 
     for y, content in rows:
         for x, ch in enumerate(content):
@@ -210,8 +213,15 @@ def collision_map_from_ascii(
                 # Underlying tile is walkable but sprite blocks it
                 cm.set_walkable(x, y)
                 cm.add_npc(x, y)
+                # Record entity position
+                if ch in entity_points:
+                    entity_points[ch].append(Point(x, y))
+            elif ch == 'C':
+                # PC/counter — blocked for collision but record position
+                cm.set_blocked(x, y)
+                entity_points["C"].append(Point(x, y))
             else:
-                # '#', 'C', 'B', '!' and anything else → blocked
+                # '#', 'B', '!' and anything else → blocked
                 cm.set_blocked(x, y)
 
     # Also add warps from the structured warps_data (may include warps
@@ -226,7 +236,7 @@ def collision_map_from_ascii(
                 # Ensure warp tiles are walkable (they must be traversable)
                 cm.set_walkable(wx, wy)
 
-    return cm, warp_points
+    return cm, warp_points, entity_points
 
 
 def find_path(collision_map: CollisionMap, start: Point, goal: Point) -> Optional[Path]:

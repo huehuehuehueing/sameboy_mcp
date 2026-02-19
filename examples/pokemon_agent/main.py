@@ -488,32 +488,54 @@ class PokemonAgent:
                             state.map_id, item.x, item.y
                         )
 
-        elif action == "collect_item":
-            if self._area_analyzer:
-                nearest = self._area_analyzer.get_nearest_item(
-                    state.map_id, state.player_x, state.player_y
+        elif action == "navigate_to":
+            x = decision.get("x")
+            y = decision.get("y")
+            do_interact = decision.get("interact", False)
+            if x is not None and y is not None:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos}"
+                    f" → navigate_to({x},{y}) interact={do_interact}"
                 )
-                if nearest:
-                    item, dist = nearest
-                    self._log_action(
-                        f"[{self._step_count}] {state.map_name} {pos}"
-                        f" → collect {item.item_name or 'item'} at ({item.x},{item.y})"
-                    )
-                    dx = item.x - state.player_x
-                    dy = item.y - state.player_y
-                    if abs(dx) > abs(dy):
-                        await self._routines.walk("right" if dx > 0 else "left", 1)
-                    elif abs(dy) > 0:
-                        await self._routines.walk("down" if dy > 0 else "up", 1)
-                    else:
-                        await self._routines.interact()
-                        self._area_analyzer.mark_item_collected(state.map_id, item.x, item.y)
-                        self._log_action(f"  collected {item.item_name or 'item'}")
+                reached = await self._routines.navigate_to(x, y, interact=do_interact)
+                if reached:
+                    self._log_action(f"  reached target ({x},{y})")
                 else:
-                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → no items nearby")
-                    walkable = await self._routines.get_walkable_directions()
-                    if walkable:
-                        await self._routines.walk(walkable[0], 1)
+                    self._log_action(f"  failed to reach ({x},{y})")
+            else:
+                self._log_action(f"[{self._step_count}] {state.map_name} {pos} → navigate_to missing x/y")
+
+        elif action == "collect_item":
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → collect_item (BFS)")
+            reached = await self._routines.navigate_to_target("item")
+            if reached:
+                self._log_action(f"  collected item")
+                # Mark as collected in area analyzer if available
+                if self._area_analyzer:
+                    after = await self._routines.read_state()
+                    items_here = self._area_analyzer.get_items_at(
+                        state.map_id, after.player_x, after.player_y
+                    )
+                    for item in items_here:
+                        self._area_analyzer.mark_item_collected(state.map_id, item.x, item.y)
+            else:
+                self._log_action(f"  no reachable item found")
+
+        elif action == "find_pokecenter":
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → find_pokecenter (BFS)")
+            reached = await self._routines.navigate_to_target("pokecenter")
+            if reached:
+                self._log_action(f"  reached pokecenter entrance")
+            else:
+                self._log_action(f"  no pokecenter warp on this map")
+
+        elif action == "collect_hidden":
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → collect_hidden (BFS)")
+            reached = await self._routines.navigate_to_target("hidden_item")
+            if reached:
+                self._log_action(f"  reached hidden item location")
+            else:
+                self._log_action(f"  no reachable hidden item found")
 
         elif action == "wait":
             frames = decision.get("frames", 60)

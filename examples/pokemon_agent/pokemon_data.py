@@ -794,6 +794,22 @@ MAP_NAMES = {
     248: "Summer Beach House",         # $F8
 }
 
+# Pokecenter map IDs — used for cross-map warp detection
+POKECENTER_MAP_IDS = {
+    41,   # Viridian Pokemon Center
+    58,   # Pewter Pokemon Center
+    64,   # Cerulean Pokemon Center
+    68,   # Mt. Moon Pokemon Center
+    81,   # Rock Tunnel Pokemon Center
+    89,   # Vermilion Pokemon Center
+    133,  # Celadon Pokemon Center
+    141,  # Lavender Pokemon Center
+    154,  # Fuchsia Pokemon Center
+    171,  # Cinnabar Pokemon Center
+    182,  # Saffron Pokemon Center
+    174,  # Indigo Plateau Lobby (has healing)
+}
+
 # Tileset names — sequential 0-24 per tileset_headers.asm
 TILESET_NAMES = {
     0x00: "OVERWORLD",

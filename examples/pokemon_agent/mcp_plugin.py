@@ -234,6 +234,8 @@ TRAINER_SPRITE_IDS = {
     0x12, 0x13, 0x14, 0x15,
 }
 ITEM_BALL_SPRITE_ID = 0x29
+PIKACHU_PICTURE_ID  = 0x3D   # SPRITE_PIKACHU from pokeyellow sprite_constants.asm
+PIKACHU_SPRITE_INDEX = 15    # Always last sprite slot (NUM_SPRITESTATEDATA_STRUCTS - 1)
 
 
 # ============================================================
@@ -484,7 +486,12 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
                 if block_tiles:
                     tile_row = dy * 2
                     tile_col = dx * 2
-                    tile_id = block_tiles[tile_row * 4 + tile_col]
+                    # The game's collision system checks the bottom-left tile of each 2x2 quad
+                    # (see _GetTileAndCoordsInFrontOfPlayer in player_state.asm:
+                    #  lda_coord 8,7 for UP, 8,11 for DOWN, 6,9 for LEFT, 10,9 for RIGHT
+                    #  — all resolve to the bottom-left tile of the destination quad)
+                    visual_tile = block_tiles[tile_row * 4 + tile_col]
+                    coll_tile = block_tiles[(tile_row + 1) * 4 + tile_col]
 
                     quad_tiles = {
                         block_tiles[tile_row * 4 + tile_col],
@@ -493,11 +500,11 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
                         block_tiles[(tile_row + 1) * 4 + tile_col + 1],
                     }
 
-                    if tile_id in warp_tile_set:
+                    if coll_tile in warp_tile_set or visual_tile in warp_tile_set:
                         grid[sy][sx] = "W"
-                    elif tile_id == grass_tile_id and grass_tile_id != -1:
+                    elif coll_tile == grass_tile_id and grass_tile_id != -1:
                         grid[sy][sx] = "G"
-                    elif tile_id in walkable_set:
+                    elif coll_tile in walkable_set:
                         grid[sy][sx] = "."
                     elif quad_tiles & pc_tile_set:
                         grid[sy][sx] = "C"
@@ -544,6 +551,7 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
     # --- Read sprites ---
     num_sprites = _read_byte(emu_thread, WRAM_NUM_SPRITES)
     sprites = []
+    pikachu_pos = None  # Track Pikachu follower position separately
     for i in range(1, min(num_sprites + 1, 16)):
         pic_id = _read_byte(emu_thread, WRAM_SPRITE_DATA_1 + i * 16)
         if pic_id == 0:
@@ -571,6 +579,17 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
         })
         if 0 <= npc_x < step_w and 0 <= npc_y < step_h:
             grid[npc_y][npc_x] = char
+
+    # --- Read Pikachu follower sprite (index 15, separate from map sprites) ---
+    pika_pic = _read_byte(emu_thread, WRAM_SPRITE_DATA_1 + PIKACHU_SPRITE_INDEX * 16)
+    if pika_pic != 0:
+        pika_s2 = WRAM_SPRITE_DATA_2 + PIKACHU_SPRITE_INDEX * 16
+        pika_y = _read_byte(emu_thread, pika_s2 + 0x04) - 4
+        pika_x = _read_byte(emu_thread, pika_s2 + 0x05) - 4
+        if pika_x >= 0 or pika_y >= 0:
+            pikachu_pos = {"x": pika_x, "y": pika_y}
+            # Don't add to grid — Pikachu follows player and has special collision
+            # handling (PikachuCollisionCounter lets player through eventually)
 
     # --- Mark player ---
     if 0 <= player_x < step_w and 0 <= player_y < step_h:
@@ -609,6 +628,7 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
         "warps": warps,
         "bg_events": bg_events,
         "sprites": sprites,
+        "pikachu_pos": pikachu_pos,
     }
     if include_legend:
         result["legend"] = (
