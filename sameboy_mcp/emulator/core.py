@@ -405,6 +405,42 @@ class SameBoyEmulator:
         data = bytes(ffi.buffer(ptr, size[0]))
         return (data, bank[0])
 
+    def patch_rom(self, address: int, value: int) -> tuple[int, int]:
+        """
+        Patch a byte in the ROM buffer directly.
+
+        Uses GB_get_direct_access to get a writable pointer to the ROM,
+        bypassing MBC bank-switching that makes GB_write_memory fail for ROM.
+
+        Args:
+            address: ROM address (0 to ROM size - 1)
+            value: Byte value to write (0x00-0xFF)
+
+        Returns:
+            Tuple of (old_value, new_value)
+
+        Raises:
+            RuntimeError: If ROM not loaded or address out of bounds
+        """
+        if not self._rom_loaded:
+            raise RuntimeError("No ROM loaded")
+
+        size = ffi.new("size_t*")
+        bank = ffi.new("uint16_t*")
+        ptr = self.lib.GB_get_direct_access(self.gb, DIRECT_ACCESS_MAP["rom"], size, bank)
+
+        if ptr == ffi.NULL:
+            raise RuntimeError("Failed to get ROM direct access")
+
+        rom_size = size[0]
+        if address < 0 or address >= rom_size:
+            raise ValueError(f"Address 0x{address:X} out of ROM bounds (0x0-0x{rom_size - 1:X})")
+
+        buf = ffi.buffer(ptr, rom_size)
+        old_value = buf[address] if isinstance(buf[address], int) else buf[address][0]
+        buf[address] = bytes([value & 0xFF])
+        return (old_value, value & 0xFF)
+
     # ============ Registers ============
 
     def get_registers(self) -> dict:
@@ -792,6 +828,84 @@ class SameBoyEmulator:
         if self._live_display and self._live_display.is_running:
             return self._live_display.user_input_enabled
         return False
+
+    # ============ Cheats ============
+
+    def add_cheat(self, description: str, address: int, bank: int, value: int,
+                  old_value: int, use_old_value: bool, enabled: bool) -> dict:
+        """Add a cheat code."""
+        cheat = self.lib.GB_add_cheat(
+            self.gb, description.encode("utf-8"),
+            address & 0xFFFF, bank & 0xFFFF, value & 0xFF,
+            old_value & 0xFF, use_old_value, enabled
+        )
+        if cheat == ffi.NULL:
+            return {"error": "Failed to add cheat"}
+        return {
+            "address": cheat.address,
+            "bank": cheat.bank,
+            "value": cheat.value,
+            "description": ffi.string(cheat.description).decode("utf-8", errors="replace"),
+            "enabled": cheat.enabled,
+        }
+
+    def remove_cheat(self, index: int) -> bool:
+        """Remove a cheat by index."""
+        size = ffi.new("size_t*")
+        cheats_ptr = self.lib.GB_get_cheats(self.gb, size)
+        if index < 0 or index >= size[0]:
+            return False
+        self.lib.GB_remove_cheat(self.gb, cheats_ptr[index])
+        return True
+
+    def remove_all_cheats(self) -> None:
+        """Remove all cheats."""
+        self.lib.GB_remove_all_cheats(self.gb)
+
+    def list_cheats(self) -> list[dict]:
+        """List all cheats."""
+        size = ffi.new("size_t*")
+        cheats_ptr = self.lib.GB_get_cheats(self.gb, size)
+        result = []
+        for i in range(size[0]):
+            c = cheats_ptr[i]
+            result.append({
+                "index": i,
+                "description": ffi.string(c.description).decode("utf-8", errors="replace"),
+                "address": c.address,
+                "bank": c.bank,
+                "value": c.value,
+                "old_value": c.old_value,
+                "use_old_value": c.use_old_value,
+                "enabled": c.enabled,
+            })
+        return result
+
+    def cheats_enabled(self) -> bool:
+        """Check if cheats are globally enabled."""
+        return bool(self.lib.GB_cheats_enabled(self.gb))
+
+    def set_cheats_enabled(self, enabled: bool) -> None:
+        """Enable or disable cheats globally."""
+        self.lib.GB_set_cheats_enabled(self.gb, enabled)
+
+    def import_cheat(self, code: str, description: str, enabled: bool) -> dict:
+        """Import a GameShark/Game Genie cheat code string."""
+        cheat = self.lib.GB_import_cheat(
+            self.gb, code.encode("utf-8"),
+            description.encode("utf-8"), enabled
+        )
+        if cheat == ffi.NULL:
+            return {"error": f"Failed to parse cheat code: {code}"}
+        return {
+            "address": cheat.address,
+            "bank": cheat.bank,
+            "value": cheat.value,
+            "old_value": cheat.old_value,
+            "use_old_value": cheat.use_old_value,
+            "description": ffi.string(cheat.description).decode("utf-8", errors="replace"),
+            "enabled": cheat.enabled,
+        }
 
     # ============ Dashboard ============
 

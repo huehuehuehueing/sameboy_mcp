@@ -96,6 +96,17 @@ class CommandType(Enum):
     # Rendering
     SET_RENDERING_DISABLED = auto()
 
+    # ROM patching
+    PATCH_ROM = auto()
+
+    # Cheats
+    ADD_CHEAT = auto()
+    REMOVE_CHEAT = auto()
+    REMOVE_ALL_CHEATS = auto()
+    LIST_CHEATS = auto()
+    SET_CHEATS_ENABLED = auto()
+    IMPORT_CHEAT = auto()
+
     # Dashboard
     DASHBOARD_SNAPSHOT = auto()
 
@@ -460,6 +471,49 @@ class EmulatorThread:
                 case CommandType.SET_RENDERING_DISABLED:
                     emu.set_rendering_disabled(args["disabled"])
                     return {"success": True}
+
+                # ROM patching
+                case CommandType.PATCH_ROM:
+                    old_val, new_val = emu.patch_rom(args["address"], args["value"])
+                    return {
+                        "success": True,
+                        "address": f"0x{args['address']:X}",
+                        "old_value": old_val,
+                        "new_value": new_val,
+                    }
+
+                # Cheats
+                case CommandType.ADD_CHEAT:
+                    return emu.add_cheat(
+                        args["description"], args["address"], args["bank"],
+                        args["value"], args["old_value"], args["use_old_value"],
+                        args["enabled"]
+                    )
+
+                case CommandType.REMOVE_CHEAT:
+                    success = emu.remove_cheat(args["index"])
+                    return {"success": success}
+
+                case CommandType.REMOVE_ALL_CHEATS:
+                    emu.remove_all_cheats()
+                    return {"success": True}
+
+                case CommandType.LIST_CHEATS:
+                    cheats = emu.list_cheats()
+                    return {
+                        "cheats": cheats,
+                        "count": len(cheats),
+                        "globally_enabled": emu.cheats_enabled(),
+                    }
+
+                case CommandType.SET_CHEATS_ENABLED:
+                    emu.set_cheats_enabled(args["enabled"])
+                    return {"success": True, "enabled": args["enabled"]}
+
+                case CommandType.IMPORT_CHEAT:
+                    return emu.import_cheat(
+                        args["code"], args["description"], args["enabled"]
+                    )
 
                 # Dashboard
                 case CommandType.DASHBOARD_SNAPSHOT:

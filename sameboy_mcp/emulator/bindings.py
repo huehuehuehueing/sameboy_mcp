@@ -230,6 +230,31 @@ ffi.cdef("""
     void GB_set_channel_muted(GB_gameboy_t *gb, GB_channel_t channel, bool muted);
     bool GB_is_channel_muted(GB_gameboy_t *gb, GB_channel_t channel);
     void GB_set_interference_volume(GB_gameboy_t *gb, double volume);
+
+    // ============ Cheats ============
+    typedef struct GB_cheat_s {
+        uint16_t address;
+        uint16_t bank;
+        uint8_t value;
+        uint8_t old_value;
+        bool use_old_value;
+        bool enabled;
+        char description[128];
+    } GB_cheat_t;
+
+    const GB_cheat_t *GB_add_cheat(GB_gameboy_t *gb, const char *description,
+        uint16_t address, uint16_t bank, uint8_t value, uint8_t old_value,
+        bool use_old_value, bool enabled);
+    void GB_update_cheat(GB_gameboy_t *gb, const GB_cheat_t *cheat,
+        const char *description, uint16_t address, uint16_t bank,
+        uint8_t value, uint8_t old_value, bool use_old_value, bool enabled);
+    const GB_cheat_t *GB_import_cheat(GB_gameboy_t *gb, const char *cheat,
+        const char *description, bool enabled);
+    const GB_cheat_t *const *GB_get_cheats(GB_gameboy_t *gb, size_t *size);
+    void GB_remove_cheat(GB_gameboy_t *gb, const GB_cheat_t *cheat);
+    void GB_remove_all_cheats(GB_gameboy_t *gb);
+    bool GB_cheats_enabled(GB_gameboy_t *gb);
+    void GB_set_cheats_enabled(GB_gameboy_t *gb, bool enabled);
 """)
 
 
