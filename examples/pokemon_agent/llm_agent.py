@@ -164,6 +164,7 @@ class LLMToolAgent:
             self._client = OpenAI(
                 base_url=base_url,
                 api_key=llm_cfg.get("api_key") or "not-needed",
+                timeout=30.0,  # 30s per API call; prevents indefinite hangs
             )
 
             # Query actual model name from server (vLLM uses "default" as placeholder)
@@ -468,20 +469,30 @@ report_result battle actions:
 
 STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI. You have access to all emulator and game tools.
 
-STRATEGY — use at most 2-3 tools to observe, then call report_result:
-1. decode_screen_text — read on-screen dialog, menus, signs (use FIRST).
-2. render_ascii_map — see the area layout. Legend: . walkable, # wall, @ player, W warp/door, G grass, N NPC, T trainer, I item, C PC, B bookshelf, ! sign.
-3. read_memory — check specific addresses when needed.
-4. press_key / run_frames — advance dialog or interact when the game needs direct input (e.g. pressing A through text boxes). Use sparingly.
-5. report_result — REQUIRED. Call this with your decision BEFORE turns run out.
+You have plenty of turns. Use them to COMPLETE the task — do not stop early.
 
-You can use ANY available tool, but be efficient. Do not burn turns on unnecessary calls.
-When an operator instruction is present, follow it exactly.
+TOOLS:
+- decode_screen_text — read on-screen text (dialog, menus, signs). Use this FIRST and OFTEN.
+- render_ascii_map — area layout. Legend: . walkable, # wall, @ player, W warp/door, G grass, N NPC, T trainer, I item, C PC, B bookshelf, ! sign.
+- press_key — press a button (a, b, up, down, left, right, start, select). Use with frames=8 for normal presses.
+- run_frames — advance the game without input (use count=30 to let animations/text render).
+- read_memory — check specific memory addresses.
+- report_result — REQUIRED as your FINAL call to hand control back to the agent.
 
-report_result overworld actions:
+MULTI-STEP INTERACTIONS (PC, NPCs, menus):
+When interacting with objects like PCs or NPCs, you must drive the ENTIRE interaction:
+1. press_key a → run_frames 30 → decode_screen_text (read the response)
+2. Repeat: press_key to advance dialog / navigate menus, decode_screen_text to read
+3. Continue until the interaction is COMPLETE (item obtained, dialog finished, etc.)
+4. THEN call report_result with action "wait"
+
+Do NOT call report_result after just one A press. Complete the full interaction.
+When an operator instruction is present, follow it until the goal is achieved.
+
+report_result actions (call this as your LAST tool call):
 - "explore" with direction (up/down/left/right) and steps (1-5)
-- "interact" — press A to talk to NPC/object the player is facing
+- "interact" — single A press (only for simple interactions)
 - "find_exit" — auto-navigate to nearest exit/warp
 - "collect_item" — pick up nearest item
 - "heal" — go to Pokecenter
-- "wait" with frames to pause"""
+- "wait" with frames — use after completing a multi-step interaction"""

@@ -577,7 +577,7 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                 decision = await self._llm_agent.run_with_tools(
                     BATTLE_SYSTEM_PROMPT,
                     battle_context,
-                    max_turns=5,
+                    max_turns=15,
                 )
 
                 action = decision.get("action", "move")
@@ -661,7 +661,7 @@ Use tools to analyze the situation, then call report_result with your action."""
                 decision = await self._llm_agent.run_with_tools(
                     STRATEGY_SYSTEM_PROMPT,
                     strategy_context,
-                    max_turns=5,
+                    max_turns=15,
                 )
 
                 # When LLM is unavailable, wait for dashboard actions
