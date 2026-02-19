@@ -1,0 +1,7 @@
+Create a brief summary of our conversation so far. Include:
+1. Key game events and milestones reached
+2. Important decisions made
+3. Current objectives
+4. Current location and Pokemon team status
+5. Strategies and plans mentioned
+Be concise - this will replace the full history.

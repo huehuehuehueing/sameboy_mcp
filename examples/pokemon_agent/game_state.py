@@ -282,6 +282,13 @@ class GameState:
     naming_type: int = 0       # 0=player, 1=rival, 2=pokemon
     letters_entered: int = 0   # Number of chars entered so far
 
+    # Input control
+    ignore_input: int = 0   # Frames remaining where game ignores joypad
+    joypad_sim: int = 0     # Non-zero when game is simulating joypad (scripted sequences)
+    names_set: bool = False  # True when both player and rival names arent debug defaults
+    pc: int = 0             # CPU program counter (for debug logging)
+    game_timer_counting: bool = False  # BIT_GAME_TIMER_COUNTING: set once by SpecialEnterMap after OakSpeech
+
     # Raw
     joypad_pressed: int = 0
     joypad_held: int = 0
@@ -668,7 +675,7 @@ class GameStateReader:
         menu_cursor: int,
         text_box_id: int,
         ignore_input: int,
-        pc: int,
+        regs: dict,
         naming_screen: int,
         party_count: int,
         oak_speech: int,
@@ -677,6 +684,8 @@ class GameStateReader:
         textbox_open: int = 0,
         script_running: int = 0,
         joypad_sim: int = 0,
+        names_set: bool = False,
+        pc: int = 0,
     ) -> GameMode:
         """Detect current game mode from memory values."""
         # Lost battle
@@ -687,48 +696,54 @@ class GameStateReader:
         if in_battle in (1, 2):
             return GameMode.BATTLE
 
-        # Name entry screen - check screen text for character grid
-        # This is more reliable than the naming_screen memory address
+        # Name entry screen - detect by keyboard grid or nickname prompt
+        # NOTE: Do NOT check for "YOUR NAME" / "HIS NAME" here — those
+        # strings appear in Oak's dialog ("what is your name?") BEFORE the
+        # keyboard opens, causing false NAME_ENTRY detection.
         if screen_text and screen_text.has_text:
             text = screen_text.full_text.upper()
-            # Name entry screens show various prompts
-            if ("YOUR NAME" in text or "HIS NAME" in text or "RIVAL NAME" in text or "NICKNAME" in text):
-                return GameMode.NAME_ENTRY
-            # Character grid pattern: "A B C D E F G H I"
+            # Character grid pattern — definitive indicator of keyboard
             if "A B C D E F G H I" in text:
+                return GameMode.NAME_ENTRY
+            # Nickname prompt (naming a caught Pokemon)
+            if "NICKNAME" in text:
                 return GameMode.NAME_ENTRY
 
         # Name entry via memory flag
         if naming_screen != 0:
+            print("Debug: naming_screen flag set, detecting NAME_ENTRY mode")
             return GameMode.NAME_ENTRY
 
-        # Title screen / Intro detection
-        # Early game before player has Pokemon and before Oak speech is complete
-        if party_count == 0 and badges == 0:
-            # Check for specific title/intro indicators
+        # Universal title/main menu detection for map_id=0
+        # These strings only appear on title/main menu screens, so they're
+        # reliable regardless of names_set (handles stale name data in RAM)
+        if map_id == 0 and screen_text and screen_text.has_text:
+            text = screen_text.full_text.upper()
+            if "PRESS START" in text:
+                print("Debug: Detected 'PRESS START' on map 0, detecting TITLE_SCREEN mode")
+                return GameMode.TITLE_SCREEN
+            if "NEW GAME" in text:
+                print("Debug: Detected 'NEW GAME' on map 0, detecting MAIN_MENU mode")
+                return GameMode.MAIN_MENU
+
+        # Title screen / Intro detection (pre-game only)
+        # Guarded by `not names_set` to prevent misdetecting Pallet Town
+        # (map_id=0) as title screen when the player is actually in-game
+        if party_count == 0 and badges == 0 and not names_set:
             if map_id == 0:
-                # Check screen text for known strings
-                if screen_text and screen_text.has_text:
-                    text = screen_text.full_text.upper()
-                    if "CONTINUE" in text or "NEW GAME" in text or "OPTION" in text:
-                        return GameMode.MAIN_MENU
-                    if "PRESS START" in text or "START" in text:
-                        return GameMode.TITLE_SCREEN
                 # Check PC range for title screen code
                 if pc < 0x4000:
+                    print("Debug: Detected PC in title screen code range, detecting TITLE_SCREEN mode")
                     return GameMode.TITLE_SCREEN
                 # Oak intro sequence (PC in specific ROM bank)
                 if pc >= 0x4000 and pc < 0x8000:
-                    # Oak speech not complete
                     if oak_speech & 0x40 == 0:
+                        print("Debug: Detected Oak's intro speech (oak_speech flag), detecting INTRO mode")
                         return GameMode.INTRO
 
-        # Main menu (after title, before gameplay)
-        if map_id == 0 and party_count == 0:
-            if screen_text and screen_text.has_text:
-                text = screen_text.full_text.upper()
-                if "CONTINUE" in text or "NEW GAME" in text:
-                    return GameMode.MAIN_MENU
+        # Fallback: map_id=0 with no party and names not set = title screen
+        if map_id == 0 and party_count == 0 and not names_set:
+            print("Debug: Fallback detection for title screen (map_id=0, no party, names not set)")
             return GameMode.TITLE_SCREEN
 
         # Check for scripted sequence using wSimulatedJoypadStatesIndex
@@ -742,6 +757,7 @@ class GameStateReader:
         if joypad_sim != 0:
             # Joypad simulation is active - game is controlling player
             if party_count == 0 and badges == 0 and map_id == 0:
+                print("Debug: Detected joypad simulation on title/intro map, detecting INTRO mode")
                 return GameMode.INTRO
             return GameMode.DIALOG
 
@@ -813,9 +829,31 @@ class GameStateReader:
         # When non-zero, game is controlling player (cutscenes, intros)
         joypad_sim = await self._read_byte(mem.WRAM_SIM_JOYPAD_STATES_INDEX)
 
+        # Read wStatusFlags6 — bit 0 (BIT_GAME_TIMER_COUNTING) is set once
+        # by SpecialEnterMap after OakSpeech returns.  Never cleared.
+        status_flags6 = await self._read_byte(mem.WRAM_STATUS_FLAGS6)
+        game_timer_counting = bool(status_flags6 & 0x01)
+
+        # Read player and rival name first bytes to detect post-OakSpeech state
+        player_raw = await self._read(mem.WRAM_PLAYER_NAME, 11)
+        rival_raw = await self._read(mem.WRAM_RIVAL_NAME, 11)
+        p_bytes = player_raw.get("bytes", []) if isinstance(player_raw, dict) else player_raw
+        r_bytes = rival_raw.get("bytes", []) if isinstance(rival_raw, dict) else rival_raw
+        p_name = mem.decode_text(p_bytes, max_len=11)
+        r_name = mem.decode_text(r_bytes, max_len=11)
+
+        # Names are "set" when both start with valid uppercase letter tiles (A-Z)
+        names_set = p_name != "NINTEN" and r_name != "SONY"
+
         # Get CPU PC for title screen detection
         regs = await self._call("get_registers", {})
-        pc = regs.get("PC", 0) if isinstance(regs, dict) else 0
+        pc = 0
+        if isinstance(regs, dict):
+            # Registers come nested: {'16-bit': {'PC': ..., 'SP': ...}, '8-bit': {...}}
+            regs_16 = regs.get("16-bit", regs)
+            raw_pc = regs_16.get("PC", 0)
+            # Value may be int or hex string like "0x0150"
+            pc = int(raw_pc, 16) if isinstance(raw_pc, str) else int(raw_pc)
 
         # Read screen text for dialog/menu detection
         screen_text = await self._read_screen_text()
@@ -838,7 +876,7 @@ class GameStateReader:
             menu_cursor=menu_cursor,
             text_box_id=text_box_id,
             ignore_input=ignore_input,
-            pc=pc,
+            regs=regs,
             naming_screen=naming_screen,
             party_count=party_count,
             oak_speech=oak_speech,
@@ -847,6 +885,7 @@ class GameStateReader:
             textbox_open=textbox_open,
             script_running=script_running,
             joypad_sim=joypad_sim,
+            names_set=names_set,
         )
 
         # Read party Pokemon
@@ -937,6 +976,11 @@ class GameStateReader:
             map_info=map_info,
             naming_type=naming_screen,
             letters_entered=letters_entered,
+            ignore_input=ignore_input,
+            joypad_sim=joypad_sim,
+            names_set=names_set,
+            pc=pc,
+            game_timer_counting=game_timer_counting,
             joypad_pressed=joy_pressed,
             joypad_held=joy_held,
         )

@@ -6,6 +6,7 @@ Includes cost tracking and history summarization.
 """
 
 import json
+from pathlib import Path
 from typing import Callable, Any
 
 try:
@@ -250,7 +251,10 @@ class LLMToolAgent:
             if len(preview) > 100:
                 preview = preview[:100] + "..."
             prefix = f"[{key}] " if key else ""
-            return f"{prefix}{preview}"
+            pos = ""
+            if "player_x" in result:
+                pos = f" @({result['player_x']},{result['player_y']})"
+            return f"{prefix}{preview}{pos}"
 
         if name == "read_memory":
             addr = result.get("address", "?")
@@ -295,15 +299,7 @@ class LLMToolAgent:
 
         self._log(f"summarizing history ({len(self._message_history)} messages)")
 
-        summary_prompt = (
-            "Create a brief summary of our conversation so far. Include:\n"
-            "1. Key game events and milestones reached\n"
-            "2. Important decisions made\n"
-            "3. Current objectives\n"
-            "4. Current location and Pokemon team status\n"
-            "5. Strategies and plans mentioned\n"
-            "Be concise - this will replace the full history."
-        )
+        summary_prompt = SUMMARY_PROMPT
 
         try:
             summary_messages = list(self._message_history) + [
@@ -406,6 +402,9 @@ class LLMToolAgent:
             {"role": "system", "content": system_prompt},
         ] + list(self._message_history)
 
+        consecutive_blanks = 0
+        BLANK_THRESHOLD = 3
+
         for turn in range(max_turns):
             self._log(f"turn {turn + 1}/{max_turns}")
 
@@ -470,6 +469,31 @@ class LLMToolAgent:
                         "tool_call_id": tool_call.id,
                         "content": json.dumps(result) if not isinstance(result, str) else result,
                     })
+
+                    # Track consecutive blank press_and_read results
+                    if func_name in ("press_and_read", "wait_and_read"):
+                        text_lines = result.get("text_lines", []) if isinstance(result, dict) else []
+                        if not any(line.strip() for line in text_lines):
+                            consecutive_blanks += 1
+                        else:
+                            consecutive_blanks = 0
+
+                        if consecutive_blanks >= BLANK_THRESHOLD:
+                            warning = (
+                                f"WARNING: {consecutive_blanks} consecutive blank "
+                                f"screen results. Your button presses are having no "
+                                f"visible effect. Check the player_x, player_y from "
+                                f"your last press_and_read — if your position hasn't "
+                                f"changed, you are ADJACENT to something. Press A to "
+                                f"interact! If you are lost, call render_ascii_map "
+                                f"to see your position and navigate toward your target."
+                            )
+                            self._log(f"  *** blank screen warning ({consecutive_blanks}x)")
+                            messages.append({
+                                "role": "user",
+                                "content": warning,
+                            })
+                            consecutive_blanks = 0  # reset so warning fires again after another streak
             else:
                 # No tool calls — try to parse text content as a JSON decision
                 # (some models return the decision as text instead of calling report_result)
@@ -500,96 +524,10 @@ class LLMToolAgent:
         return {"action": "wait", "frames": 60}
 
 
-# System prompts for different decision types
+# System prompts loaded from prompts/ directory
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle AI. You have access to all emulator and game tools.
-
-STRATEGY:
-1. Use press_and_read(key="a") or decode_screen_text to read the battle menu/options.
-2. Use read_memory if you need HP or stats (e.g. 0xD014 = your HP, 0xCFE5 = enemy HP).
-3. Call report_result with your decision.
-
-CRITICAL: You MUST call report_result. Use at most 3 observation tools, then decide.
-
-report_result battle actions:
-- "move" with index 0-3 for which move to use
-- "run" to flee from wild battles
-- "switch" with index 0-5 for party Pokemon
-- "item" with index for bag item"""
-
-STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI controlling Pokemon Yellow via emulator tools.
-
-You have plenty of turns. Use them to COMPLETE the task — do not stop early.
-
-PRIMARY TOOLS (use these for 90% of actions):
-- press_and_read(key, frames=16, wait=60) — press button + wait + read screen text. YOUR MAIN TOOL. Returns text_lines showing what's on screen.
-- wait_and_read(wait=60) — wait without pressing, then read screen. Use when text is still printing.
-- render_ascii_map — see area layout. Legend: . walkable, # wall, @ player, W warp, G grass, N NPC, T trainer, I item, C PC, B bookshelf, ! sign.
-
-OTHER TOOLS (use sparingly):
-- press_key / run_frames / decode_screen_text — low-level versions. Avoid these — use press_and_read instead.
-- read_memory — check specific game memory addresses.
-- report_result — REQUIRED as your FINAL call to hand control back.
-
-WORKFLOW:
-1. ORIENT FIRST: Call render_ascii_map to see where you are and what's nearby.
-2. MOVE TO TARGET: Use press_and_read(key="up/down/left/right") to walk. Check text_lines after each move.
-3. INTERACT: Face the object, then press_and_read(key="a") to interact. Read the text_lines result.
-4. REPEAT until the screen text CONFIRMS the goal.
-5. Call report_result with evidence.
-
-BLANK SCREEN = NO EFFECT:
-If press_and_read returns empty text_lines, the button press had no effect. Likely causes:
-- You're not adjacent to or facing the target. Use render_ascii_map to check position.
-- You need to move closer first. Walk toward the target with press_and_read(key="direction").
-- Don't repeat the same action more than 3 times if text stays blank — reposition instead.
-
-MENU NAVIGATION (PC, shops, NPCs):
-- A confirms/advances, B cancels/backs out. Arrow keys navigate menu items.
-- When you see a menu with items (e.g. "WITHDRAW ITEM"), press A to select.
-- When prompted for quantity (e.g. "×1"), press A to confirm the amount.
-- Keep pressing A through ALL confirmation dialogs until you see the result message.
-- Pokemon Yellow menus often need 3-5 A presses to complete an action: select menu → select item → confirm quantity → receive confirmation.
-- NEVER press B unless you intentionally want to CANCEL or EXIT a menu.
-
-VERIFICATION — NEVER assume or hallucinate:
-- Read text_lines after EVERY action to see what ACTUALLY happened.
-- In report_result reasoning, QUOTE actual screen text that confirms completion.
-- If you cannot confirm the goal from screen text, say so honestly in reasoning.
-- NEVER claim "item obtained" or "task complete" without quoting the confirmation text.
-
-When an operator instruction is present, follow it until the goal is verified on screen.
-
-report_result actions (call this as your LAST tool call):
-- "explore" with direction and steps (1-5)
-- "interact" — completed a multi-step interaction
-- "find_exit" — request auto-navigation to nearest exit
-- "collect_item" — pick up nearest item
-- "heal" — go to Pokecenter
-- "wait" with frames"""
-
-DIALOG_SYSTEM_PROMPT = """You are a Pokemon game AI handling a dialog or menu that is currently open.
-
-YOUR ONLY TOOLS:
-- press_and_read(key, frames=16, wait=60) — press button + read screen. YOUR MAIN TOOL.
-- wait_and_read(wait=60) — wait then read screen.
-- decode_screen_text — read current screen text.
-- report_result — REQUIRED as your FINAL call.
-
-RULES:
-1. You are ONLY handling the current menu/dialog. Do NOT explore or move around.
-2. Use press_and_read to navigate menus (A=confirm, B=cancel, arrows=navigate).
-3. When text_lines becomes BLANK (empty), the menu/dialog has CLOSED. Call report_result IMMEDIATELY.
-4. Do NOT press movement keys (up/down/left/right) unless navigating a menu cursor.
-5. Do NOT call render_ascii_map — you are in a menu, not on the overworld.
-6. Call report_result after completing the menu interaction OR when the screen goes blank.
-
-MENU TIPS:
-- A confirms, B cancels/exits. Arrow keys move cursor between options.
-- ▶ or ▷ markers show the current cursor position.
-- Keep pressing A through confirmation dialogs (select item → confirm quantity → done).
-- Pokemon Yellow menus need 3-5 A presses to complete an action.
-
-report_result actions:
-- "interact" — menu/dialog completed successfully
-- "wait" with frames — if unsure what happened"""
+BATTLE_SYSTEM_PROMPT = (_PROMPTS_DIR / "battle_tool_agent.txt").read_text()
+STRATEGY_SYSTEM_PROMPT = (_PROMPTS_DIR / "strategy_tool_agent.txt").read_text()
+DIALOG_SYSTEM_PROMPT = (_PROMPTS_DIR / "dialog_tool_agent.txt").read_text()
+SUMMARY_PROMPT = (_PROMPTS_DIR / "summarization.txt").read_text()

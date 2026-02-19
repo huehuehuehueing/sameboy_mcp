@@ -71,26 +71,69 @@ class Routines:
     async def handle_title_screen(self) -> bool:
         """Navigate past title screen. Returns True if successful."""
         self._log("handling title screen - pressing Start")
-        # Press Start on title screen
         await self.press("start", 8)
         await self.wait_frames(60)
 
         state = await self.read_state()
+        # Verify: screen text should now show NEW GAME/CONTINUE (main menu)
+        if state.screen_text and state.screen_text.has_text:
+            text = state.screen_text.full_text.upper()
+            if "NEW GAME" in text:
+                self._log("confirmed: main menu visible")
         return state.mode != GameMode.TITLE_SCREEN
 
-    async def handle_intro(self) -> bool:
-        """Skip through intro/copyright screens by pressing buttons."""
-        self._log("handling intro - pressing A to skip")
-        # Press A repeatedly to skip intro animations
-        for _ in range(5):
+    async def advance_intro(self) -> str:
+        """
+        Advance one step of the Oak intro sequence.
+
+        Reads screen text to decide what to do:
+        - If preset name list visible ("NEW NAME"): press A to select it (opens keyboard)
+        - If ▼ prompt visible: press A to advance dialog
+        - If text visible without ▼: press A to speed up or dismiss
+        - If no text: press A to advance through animation
+
+        Always presses A — safe during the intro phase.
+        Returns a short description of what happened.
+        """
+        state = await self.read_state()
+
+        # If game is running a scripted sequence (joypad simulation active),
+        # don't press anything — our input interferes with the cutscene
+        # (e.g. bedroom "ASH is playing the SNES!" sequence loops if we press A).
+        if state.joypad_sim != 0:
+            await self.wait_frames(60)
+            return "waiting (scripted sequence)"
+
+        text = ""
+        lines = []
+        if state.screen_text and state.screen_text.has_text:
+            text = state.screen_text.full_text.upper()
+            lines = state.screen_text.lines
+
+        # Detect preset name list — select "NEW NAME" (index 0) to open keyboard
+        if "NEW NAME" in text:
+            self._log("preset name list detected — selecting NEW NAME to open keyboard")
             await self.press("a", 6)
+            await self.wait_frames(120)  # Wait for keyboard to render
+            return "selected NEW NAME (keyboard)"
+
+        # Check for ▼ prompt — press A to advance
+        has_prompt = any("\u25bc" in l for l in lines)
+        if has_prompt:
+            await self.press("a", 4)
             await self.wait_frames(30)
+            return "pressed A at prompt"
 
-            state = await self.read_state()
-            if state.mode not in (GameMode.INTRO, GameMode.TITLE_SCREEN):
-                return True
+        # Text visible but no ▼ — press A to speed up printing or dismiss
+        if text:
+            await self.press("a", 4)
+            await self.wait_frames(30)
+            return "pressed A (text visible)"
 
-        return False
+        # No text on screen (animation/transition) — press A to advance
+        await self.press("a", 4)
+        await self.wait_frames(60)
+        return "pressed A (no text)"
 
     async def handle_main_menu(self, select_new_game: bool = True) -> bool:
         """
@@ -98,74 +141,74 @@ class Routines:
 
         Args:
             select_new_game: If True, select New Game. If False, select Continue.
+
+        Returns True if we successfully left the main menu.
         """
         self._log(f"handling main menu - select_new_game={select_new_game}")
         state = await self.read_state()
 
-        # Check if we can detect menu options from screen text
         if state.screen_text and state.screen_text.has_text:
             text = state.screen_text.full_text.upper()
             has_continue = "CONTINUE" in text
+            has_new_game = "NEW GAME" in text
+
+            # Verify we actually see menu options
+            if not has_new_game:
+                self._log("WARNING: 'NEW GAME' not found on screen")
+                await self.press("a", 8)
+                await self.wait_frames(60)
+                return False
 
             if select_new_game:
-                # New Game is below Continue if Continue exists
                 if has_continue:
+                    # NEW GAME is below CONTINUE — press down
+                    self._log("CONTINUE detected, pressing down to NEW GAME")
                     await self.press("down", 4)
                     await self.wait_frames(8)
+                    state = await self.read_state()
+                    self._log(f"cursor now at index {state.menu_cursor}")
             else:
-                # Continue should be first option if it exists
                 if not has_continue:
-                    self._log("no save game found - selecting New Game")
-                    select_new_game = True
+                    self._log("no save game found - selecting New Game instead")
 
-        # Select the option
         await self.press("a", 8)
         await self.wait_frames(60)
 
+        # Post-action verification
         state = await self.read_state()
-        return state.mode == GameMode.MAIN_MENU
+        if state.screen_text and state.screen_text.has_text:
+            text = state.screen_text.full_text.upper()
+            if "NEW GAME" not in text and "OPTION" not in text:
+                self._log("confirmed: left main menu")
+            else:
+                self._log("WARNING: may still be on main menu")
+        return state.mode != GameMode.MAIN_MENU
 
     async def enter_name(self, name: str = "ASH") -> bool:
-        """
-        Enter a name in the name entry screen.
+        """Type a name on the on-screen keyboard.
+
+        Assumes the keyboard grid is already visible (cursor at 'A' = row 0, col 0).
+        Navigates to each letter and presses A, then submits with START.
 
         Args:
-            name: The name to enter (max 7 chars for player/rival)
+            name: The name to type (max 7 chars)
 
         Returns True when name entry is complete.
         """
-        name = name.upper()[:7]  # Max 7 characters
-        self._log(f"entering name: {name}")
+        name = name.upper()[:7]
+        self._log(f"typing name on keyboard: {name}")
 
-        # The name entry screen has a keyboard grid layout:
-        # A B C D E F G H I
-        # J K L M N O P Q R
-        # S T U V W X Y Z
-        # (lowercase on second page)
-        # Special keys at bottom row
-
-        # Simplified approach: Use the "select name from list" if available
-        # Otherwise type each letter
-
+        # Verify keyboard is visible
         state = await self.read_state()
-
-        # Check if we're on a name selection screen with preset names
         if state.screen_text and state.screen_text.has_text:
             text = state.screen_text.full_text.upper()
+            self._log(f"keyboard screen: {text[:80]}")
+            if "A B C D E F G H I" not in text:
+                self._log("WARNING: keyboard grid not visible, waiting")
+                await self.wait_frames(60)
+                return False
 
-            # Check for default name options
-            for i, default_name in enumerate(mem.DEFAULT_PLAYER_NAMES):
-                if default_name in text:
-                    # Navigate to and select the default name
-                    for _ in range(i):
-                        await self.press("down", 4)
-                        await self.wait_frames(4)
-                    await self.press("a", 8)
-                    await self.wait_frames(30)
-                    return True
-
-        # Manual character entry
-        # Character grid positions (row, col) for each letter
+        # Keyboard grid positions (row, col)
         char_positions = {
             'A': (0, 0), 'B': (0, 1), 'C': (0, 2), 'D': (0, 3), 'E': (0, 4),
             'F': (0, 5), 'G': (0, 6), 'H': (0, 7), 'I': (0, 8),
@@ -173,51 +216,53 @@ class Routines:
             'O': (1, 5), 'P': (1, 6), 'Q': (1, 7), 'R': (1, 8),
             'S': (2, 0), 'T': (2, 1), 'U': (2, 2), 'V': (2, 3), 'W': (2, 4),
             'X': (2, 5), 'Y': (2, 6), 'Z': (2, 7),
-            ' ': (4, 0),  # Space is on bottom row
+            ' ': (4, 0),
         }
 
-        current_row, current_col = 0, 0
+        current_row, current_col = 0, 0  # Initial cursor at 'A'
 
         for char in name:
             if char not in char_positions:
-                char = ' '  # Default to space for unknown chars
-
+                char = ' '
             target_row, target_col = char_positions[char]
 
-            # Navigate to the character
+            # Navigate to target position
             while current_row < target_row:
                 await self.press("down", 4)
                 await self.wait_frames(2)
                 current_row += 1
-
             while current_row > target_row:
                 await self.press("up", 4)
                 await self.wait_frames(2)
                 current_row -= 1
-
             while current_col < target_col:
                 await self.press("right", 4)
                 await self.wait_frames(2)
                 current_col += 1
-
             while current_col > target_col:
                 await self.press("left", 4)
                 await self.wait_frames(2)
                 current_col -= 1
 
-            # Select the character
+            # Type the character
             await self.press("a", 6)
             await self.wait_frames(8)
+            self._log(f"typed '{char}'")
 
-        # Confirm the name (press Start or navigate to END)
+        # Submit name with START
         await self.press("start", 8)
         await self.wait_frames(30)
+        self._log("pressed START to submit name")
 
-        # Check if we need to confirm
+        # Press A to advance past "Your name is..." confirmation text
         await self.press("a", 6)
         await self.wait_frames(60)
 
         state = await self.read_state()
+        if state.screen_text and state.screen_text.has_text:
+            text = state.screen_text.full_text.upper()
+            if "A B C D E F G H I" not in text:
+                self._log("confirmed: left name entry")
         return state.mode != GameMode.NAME_ENTRY
 
     async def skip_oak_intro(self) -> bool:

@@ -7,6 +7,7 @@ Supports vision models (vllm-mlx, OpenAI, Anthropic) for screenshot analysis.
 
 import base64
 import json
+from pathlib import Path
 from typing import Any
 
 try:
@@ -28,78 +29,13 @@ from .game_state import GameState, BattleState, Pokemon
 from .game_analysis import GameAnalyzer
 from . import memory_map as mem
 
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle strategist for Pokemon Yellow.
-Given the current battle state, choose the best action.
-
-RESPOND WITH ONLY a JSON object, no other text:
-{"action": "move", "index": 0}        -- Use move at index 0-3
-{"action": "run"}                       -- Run from wild battle
-{"action": "switch", "index": 2}       -- Switch to party Pokemon at index 0-5
-{"action": "item", "index": 0}         -- Use bag item at index
-
-Consider:
-- Type effectiveness (super effective = 2x, not very effective = 0.5x, immune = 0x)
-- STAB bonus (Same Type Attack Bonus = 1.5x when move type matches Pokemon type)
-- HP levels (heal or switch if low)
-- PP remaining (don't use moves with 0 PP)
-- Status conditions
-- Run from wild battles if party is weak and the wild Pokemon isn't valuable
-- Enemy's known moves and their type/power — choose moves that resist their attacks
-- Stat modifiers: stages above 7 = boosted, below 7 = lowered (Gen 1 scale 1-13)
-- Battle effects like Reflect, Light Screen, Substitute change damage calculations
-- In trainer battles, consider enemy party size to manage resources"""
-
-STRATEGY_SYSTEM_PROMPT = """You are an autonomous Pokemon Yellow player.
-Given the current game state, decide what to do next.
-
-RESPOND WITH ONLY a JSON object:
-{"action": "explore", "direction": "up", "steps": 3}  -- Walk in a direction
-{"action": "heal"}                                      -- Go to nearest Pokecenter
-{"action": "interact"}                                  -- Talk to NPC / interact with object
-{"action": "enter_building"}                            -- Enter a building in front
-{"action": "wait", "frames": 60}                        -- Wait and observe
-
-Consider:
-- If party HP is low, prioritize healing
-- If in a new area, explore systematically
-- Progress the story: get badges, fight trainers
-- Keep Pikachu happy (it's Yellow version!)"""
-
-VISION_PROMPT = """Analyze this Pokemon Yellow Game Boy screenshot.
-Describe what you see:
-1. What screen/menu is shown? (overworld, battle, dialog, menu, title)
-2. Any text visible? What does it say?
-3. If overworld: describe the location, any NPCs or obstacles
-4. If battle: which Pokemon are fighting, any HP bars visible
-5. If menu: what options are shown, which is selected
-Be concise and factual."""
-
-PATHFINDING_SYSTEM_PROMPT = """You are a navigation assistant for a Pokemon Yellow AI agent.
-
-Analyze the screenshot to identify:
-1. Obstacles not visible in memory (furniture, decorations)
-2. NPCs or objects that might be interactable
-3. The best exit/target to use if multiple options exist
-
-Output ONLY a JSON object:
-{
-  "target": "stairs" or "door" or "npc",
-  "obstacles": ["description of visible obstacles"],
-  "recommendation": "Brief advice for navigation",
-  "confidence": "high" or "medium" or "low"
-}
-
-The actual pathfinding is done by coded BFS - you just provide visual analysis."""
-
-PATHFINDING_VISION_PROMPT = """Analyze this Pokemon Yellow screenshot for navigation.
-
-Identify visible obstacles and exits. Output JSON only:
-{
-  "exits_visible": ["stairs to upper-right", "door at bottom"],
-  "obstacles": ["table blocking path", "NPC near door"],
-  "recommended_direction": "right"
-}"""
+BATTLE_SYSTEM_PROMPT = (_PROMPTS_DIR / "battle_strategy.txt").read_text()
+STRATEGY_SYSTEM_PROMPT = (_PROMPTS_DIR / "overworld_strategy.txt").read_text()
+VISION_PROMPT = (_PROMPTS_DIR / "vision.txt").read_text()
+PATHFINDING_SYSTEM_PROMPT = (_PROMPTS_DIR / "pathfinding_system.txt").read_text()
+PATHFINDING_VISION_PROMPT = (_PROMPTS_DIR / "pathfinding_vision.txt").read_text()
 
 
 class StrategyEngine:

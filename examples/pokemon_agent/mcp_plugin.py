@@ -256,6 +256,11 @@ WRAM_SIGN_TEXT_IDS   = 0xD4D0
 WRAM_NUM_SPRITES     = 0xD4E0
 WRAM_SPRITE_DATA_1   = 0xC100
 WRAM_SPRITE_DATA_2   = 0xC200
+WRAM_NUM_BAG_ITEMS   = 0xD31C
+WRAM_BAG_ITEMS       = 0xD31D  # pairs of (item_id, qty), max 20 + terminator
+WRAM_MONEY           = 0xD346  # 3 bytes BCD big-endian (max 999999)
+WRAM_NUM_BOX_ITEMS   = 0xD539
+WRAM_BOX_ITEMS       = 0xD53A  # pairs of (item_id, qty), max 50 + terminator
 WRAM_TILESET_BANK    = 0xD52A
 WRAM_TILESET_BLOCKS_PTR = 0xD52B
 WRAM_TILESET_COLLISION_PTR = 0xD52F
@@ -293,6 +298,13 @@ def _read_word_le(emu_thread: EmulatorThread, addr: int) -> int:
     lo = _read_byte(emu_thread, addr)
     hi = _read_byte(emu_thread, addr + 1)
     return (hi << 8) | lo
+
+
+def _write_byte(emu_thread: EmulatorThread, addr: int, value: int) -> None:
+    emu_thread.send_command(CommandType.WRITE_MEMORY, {
+        "address": addr,
+        "value": value & 0xFF,
+    })
 
 
 # ============================================================
@@ -737,12 +749,15 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
             rows.append(row_text)
         text_lines = _extract_text_lines(rows)
 
+        # Include player position so the LLM can track movement
+        player_x = _read_byte(emu_thread, WRAM_X_COORD)
+        player_y = _read_byte(emu_thread, WRAM_Y_COORD)
+
         return {
             "key": k,
-            "frames": frames,
-            "wait": wait,
+            "player_x": player_x,
+            "player_y": player_y,
             "text_lines": text_lines,
-            "rows": rows,
         }
 
     # ----------------------------------------------------------
@@ -789,5 +804,186 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
             "rows": rows,
         }
 
+    # ----------------------------------------------------------
+    # read_inventory — read bag and/or PC item storage
+    # ----------------------------------------------------------
+    @server.tool()
+    async def read_inventory(storage: str = "bag") -> dict:
+        """
+        Read the player's item inventory.
+
+        Args:
+            storage: Which storage to read — "bag", "pc", or "both"
+
+        Returns:
+            List of items with id, name, and quantity
+        """
+        if err := _require_rom(emu_thread):
+            return err
+        from .pokemon_data import ITEM_NAMES
+
+        result = {}
+
+        if storage in ("bag", "both"):
+            count = _read_byte(emu_thread, WRAM_NUM_BAG_ITEMS)
+            items = []
+            for i in range(min(count, 20)):
+                item_id = _read_byte(emu_thread, WRAM_BAG_ITEMS + i * 2)
+                qty = _read_byte(emu_thread, WRAM_BAG_ITEMS + i * 2 + 1)
+                if item_id == 0xFF:
+                    break
+                items.append({
+                    "id": item_id,
+                    "name": ITEM_NAMES.get(item_id, f"Item_0x{item_id:02X}"),
+                    "quantity": qty,
+                })
+            result["bag"] = items
+
+        if storage in ("pc", "both"):
+            count = _read_byte(emu_thread, WRAM_NUM_BOX_ITEMS)
+            items = []
+            for i in range(min(count, 50)):
+                item_id = _read_byte(emu_thread, WRAM_BOX_ITEMS + i * 2)
+                qty = _read_byte(emu_thread, WRAM_BOX_ITEMS + i * 2 + 1)
+                if item_id == 0xFF:
+                    break
+                items.append({
+                    "id": item_id,
+                    "name": ITEM_NAMES.get(item_id, f"Item_0x{item_id:02X}"),
+                    "quantity": qty,
+                })
+            result["pc"] = items
+
+        return result
+
+    # ----------------------------------------------------------
+    # set_inventory — write items to bag or PC
+    # ----------------------------------------------------------
+    @server.tool()
+    async def set_inventory(
+        storage: str = "bag",
+        items: str = "",
+    ) -> dict:
+        """
+        Set the player's item inventory. Replaces all items in the chosen storage.
+
+        Args:
+            storage: Which storage to write — "bag" or "pc"
+            items: Comma-separated "id:qty" pairs, e.g. "20:5,11:3" (decimal item IDs).
+                   Use read_inventory to see current IDs. Max 20 for bag, 50 for PC.
+
+        Returns:
+            Confirmation with written items
+        """
+        if err := _require_rom(emu_thread):
+            return err
+        from .pokemon_data import ITEM_NAMES
+
+        if storage == "bag":
+            count_addr = WRAM_NUM_BAG_ITEMS
+            items_addr = WRAM_BAG_ITEMS
+            max_slots = 20
+        elif storage == "pc":
+            count_addr = WRAM_NUM_BOX_ITEMS
+            items_addr = WRAM_BOX_ITEMS
+            max_slots = 50
+        else:
+            return {"error": f"Invalid storage: {storage}. Use 'bag' or 'pc'."}
+
+        # Parse items string
+        parsed = []
+        if items.strip():
+            for part in items.split(","):
+                part = part.strip()
+                if ":" not in part:
+                    return {"error": f"Invalid format '{part}'. Use 'id:qty' (e.g. '20:5')."}
+                try:
+                    item_id, qty = part.split(":", 1)
+                    item_id = int(item_id)
+                    qty = int(qty)
+                except ValueError:
+                    return {"error": f"Invalid number in '{part}'."}
+                if not (1 <= item_id <= 0xFF) or not (1 <= qty <= 99):
+                    return {"error": f"Item ID must be 1-255, qty must be 1-99. Got {item_id}:{qty}."}
+                parsed.append((item_id, qty))
+
+        if len(parsed) > max_slots:
+            return {"error": f"Too many items ({len(parsed)}). Max {max_slots} for {storage}."}
+
+        # Write items
+        for i, (item_id, qty) in enumerate(parsed):
+            _write_byte(emu_thread, items_addr + i * 2, item_id)
+            _write_byte(emu_thread, items_addr + i * 2 + 1, qty)
+
+        # Write terminator
+        _write_byte(emu_thread, items_addr + len(parsed) * 2, 0xFF)
+
+        # Write count
+        _write_byte(emu_thread, count_addr, len(parsed))
+
+        written = [
+            {"id": iid, "name": ITEM_NAMES.get(iid, f"Item_0x{iid:02X}"), "quantity": q}
+            for iid, q in parsed
+        ]
+        return {"storage": storage, "count": len(parsed), "items": written}
+
+    # ----------------------------------------------------------
+    # read_money — read player's current money
+    # ----------------------------------------------------------
+    @server.tool()
+    async def read_money() -> dict:
+        """
+        Read the player's money (stored as 3-byte BCD at 0xD346).
+
+        Returns:
+            Money amount as integer and formatted string
+        """
+        if err := _require_rom(emu_thread):
+            return err
+
+        b0 = _read_byte(emu_thread, WRAM_MONEY)
+        b1 = _read_byte(emu_thread, WRAM_MONEY + 1)
+        b2 = _read_byte(emu_thread, WRAM_MONEY + 2)
+
+        def bcd_decode(b):
+            return (b >> 4) * 10 + (b & 0x0F)
+
+        amount = bcd_decode(b0) * 10000 + bcd_decode(b1) * 100 + bcd_decode(b2)
+        return {"money": amount, "formatted": f"¥{amount:,}"}
+
+    # ----------------------------------------------------------
+    # set_money — set player's money
+    # ----------------------------------------------------------
+    @server.tool()
+    async def set_money(amount: int) -> dict:
+        """
+        Set the player's money.
+
+        Args:
+            amount: Money amount (0-999999)
+
+        Returns:
+            Confirmation with new amount
+        """
+        if err := _require_rom(emu_thread):
+            return err
+
+        if not (0 <= amount <= 999999):
+            return {"error": f"Amount must be 0-999999. Got {amount}."}
+
+        def bcd_encode(n):
+            return ((n // 10) << 4) | (n % 10)
+
+        b0 = bcd_encode((amount // 10000) % 100)
+        b1 = bcd_encode((amount // 100) % 100)
+        b2 = bcd_encode(amount % 100)
+
+        _write_byte(emu_thread, WRAM_MONEY, b0)
+        _write_byte(emu_thread, WRAM_MONEY + 1, b1)
+        _write_byte(emu_thread, WRAM_MONEY + 2, b2)
+
+        return {"money": amount, "formatted": f"¥{amount:,}"}
+
     logger.info("Pokemon Yellow plugin: registered decode_screen_text, "
-                "read_screen_tiles, render_ascii_map, press_and_read, wait_and_read")
+                "read_screen_tiles, render_ascii_map, press_and_read, wait_and_read, "
+                "read_inventory, set_inventory, read_money, set_money")
