@@ -5,10 +5,61 @@ No LLM calls — pure Python logic using memory state.
 """
 
 import asyncio
+from collections import deque
 from typing import Any
 
 from . import memory_map as mem
 from .game_state import GameState, GameMode, Direction, GameStateReader, ScreenText
+from .pokemon_data import MAP_GRAPH, MAP_NAMES, MAP_NAME_TO_ID
+
+
+# ============================================================
+# Multi-map route planning (BFS over MAP_GRAPH)
+# ============================================================
+
+def plan_route(
+    current_map_id: int,
+    dest_map_id: int,
+    max_depth: int = 30,
+) -> list[tuple[int, str]] | None:
+    """BFS over MAP_GRAPH to find shortest map-level path.
+
+    Args:
+        current_map_id: Starting map ID.
+        dest_map_id: Destination map ID.
+        max_depth: Maximum BFS depth.
+
+    Returns:
+        List of (map_id, connection_type) hops from current to dest,
+        e.g. [(1, "warp"), (12, "border_south"), (0, "border_south")]
+        meaning: warp to map 1, walk south to map 12, walk south to map 0.
+        Returns empty list if already on dest_map.
+        Returns None if no route found.
+    """
+    if current_map_id == dest_map_id:
+        return []
+
+    # BFS
+    queue: deque[tuple[int, list[tuple[int, str]]]] = deque()
+    queue.append((current_map_id, []))
+    visited: set[int] = {current_map_id}
+
+    while queue:
+        map_id, path = queue.popleft()
+
+        if len(path) >= max_depth:
+            continue
+
+        for dest_id, conn_type in MAP_GRAPH.get(map_id, []):
+            if dest_id in visited:
+                continue
+            new_path = path + [(dest_id, conn_type)]
+            if dest_id == dest_map_id:
+                return new_path
+            visited.add(dest_id)
+            queue.append((dest_id, new_path))
+
+    return None
 
 
 class Routines:
@@ -1391,3 +1442,225 @@ class Routines:
         """Handle a whiteout (all Pokemon fainted). Just advance text."""
         self._log("handling whiteout")
         return await self.advance_text(max_presses=30)
+
+    # ============================================================
+    # Multi-Map Route Navigation
+    # ============================================================
+
+    async def navigate_route(self, dest_map_id: int, max_depth: int = 30) -> bool:
+        """Execute a multi-map route to reach dest_map_id.
+
+        Plans a route across map borders and warps, then executes each hop.
+
+        Args:
+            dest_map_id: Target map ID to reach.
+            max_depth: Maximum hops in the route plan.
+
+        Returns:
+            True if dest_map_id was reached.
+        """
+        state = await self.read_state()
+        current_map = state.map_id
+
+        if current_map == dest_map_id:
+            self._log(f"navigate_route: already on map {dest_map_id}")
+            return True
+
+        route = plan_route(current_map, dest_map_id, max_depth=max_depth)
+        if route is None:
+            self._log(f"navigate_route: no route from {current_map} to {dest_map_id}")
+            return False
+
+        dest_name = MAP_NAMES.get(dest_map_id, f"map_{dest_map_id}")
+        hop_summary = " → ".join(
+            f"{MAP_NAMES.get(m, str(m))}({c})" for m, c in route
+        )
+        self._log(f"navigate_route: {len(route)} hops: {hop_summary}")
+
+        for i, (next_map_id, conn_type) in enumerate(route):
+            state = await self.read_state()
+            current_map = state.map_id
+
+            # Already past this hop (e.g. border crossing landed us further)
+            if current_map == dest_map_id:
+                self._log(f"navigate_route: reached destination early at hop {i}")
+                return True
+            if current_map == next_map_id:
+                self._log(f"navigate_route: already on hop {i} target map {next_map_id}")
+                continue
+
+            self._log(f"navigate_route: hop {i+1}/{len(route)}: "
+                       f"{MAP_NAMES.get(current_map, str(current_map))} → "
+                       f"{MAP_NAMES.get(next_map_id, str(next_map_id))} ({conn_type})")
+
+            if conn_type.startswith("border_"):
+                direction = conn_type.replace("border_", "")
+                success = await self._cross_border(direction, next_map_id)
+            elif conn_type == "warp":
+                success = await self._cross_warp(next_map_id)
+            else:
+                self._log(f"navigate_route: unknown connection type '{conn_type}'")
+                success = False
+
+            if not success:
+                state = await self.read_state()
+                if state.map_id == next_map_id:
+                    # Movement succeeded despite reporting failure (e.g. battle interrupted but we still changed maps)
+                    self._log(f"navigate_route: hop succeeded despite walk failure")
+                    continue
+                self._log(f"navigate_route: hop failed at {MAP_NAMES.get(state.map_id, str(state.map_id))}")
+                return False
+
+            # Invalidate caches after map change
+            self.invalidate_map_cache()
+            new_state = await self.read_state()
+            self.set_arrival_warp(new_state.map_id, new_state.player_x, new_state.player_y)
+
+        # Final check
+        state = await self.read_state()
+        reached = state.map_id == dest_map_id
+        if reached:
+            self._log(f"navigate_route: reached {dest_name} (map {dest_map_id})")
+        else:
+            self._log(f"navigate_route: ended on map {state.map_id}, wanted {dest_map_id}")
+        return reached
+
+    async def _cross_border(self, direction: str, expected_map_id: int, max_steps: int = 100) -> bool:
+        """Walk to a map border and cross it.
+
+        Args:
+            direction: "north", "south", "east", or "west".
+            expected_map_id: The map we expect to arrive on.
+            max_steps: Maximum steps before giving up.
+
+        Returns:
+            True if map changed (ideally to expected_map_id).
+        """
+        self._log(f"_cross_border: walking {direction} to edge")
+        state = await self.read_state()
+        initial_map = state.map_id
+
+        # Determine the edge coordinate to walk toward
+        # Map dimensions are in blocks; movement grid = blocks * 2
+        map_w = (state.map_info.width * 2) if state.map_info else 20
+        map_h = (state.map_info.height * 2) if state.map_info else 18
+
+        # Pick a target at the edge of the map
+        px, py = state.player_x, state.player_y
+        if direction == "south":
+            target_y = map_h - 1
+            target_x = px  # Stay in same column
+        elif direction == "north":
+            target_y = 0
+            target_x = px
+        elif direction == "east":
+            target_x = map_w - 1
+            target_y = py
+        elif direction == "west":
+            target_x = 0
+            target_y = py
+        else:
+            self._log(f"_cross_border: unknown direction '{direction}'")
+            return False
+
+        # First try to navigate to the edge using BFS
+        self._log(f"_cross_border: navigating to edge ({target_x},{target_y})")
+
+        # Navigate close to the edge
+        reached = await self.navigate_to(target_x, target_y)
+        state = await self.read_state()
+        if state.map_id != initial_map:
+            self._log(f"_cross_border: map changed during navigation!")
+            return True
+
+        # Now try walking off the edge repeatedly
+        walk_dir = direction
+        for attempt in range(20):
+            success = await self.walk(walk_dir, 1)
+            state = await self.read_state()
+            if state.map_id != initial_map:
+                self._log(f"_cross_border: crossed border to map {state.map_id}")
+                return True
+
+            if state.mode == GameMode.BATTLE:
+                self._log(f"_cross_border: entered battle while crossing")
+                return False
+
+        # If direct edge walk failed, try adjacent columns/rows
+        state = await self.read_state()
+        px, py = state.player_x, state.player_y
+        offsets = [-1, 1, -2, 2, -3, 3]
+        for offset in offsets:
+            if direction in ("north", "south"):
+                try_x = px + offset
+                try_y = target_y
+            else:
+                try_x = target_x
+                try_y = py + offset
+
+            # Bounds check
+            if try_x < 0 or try_x >= map_w or try_y < 0 or try_y >= map_h:
+                continue
+
+            self._log(f"_cross_border: trying alternate edge tile ({try_x},{try_y})")
+            reached = await self.navigate_to(try_x, try_y)
+            state = await self.read_state()
+            if state.map_id != initial_map:
+                return True
+
+            for _ in range(5):
+                await self.walk(walk_dir, 1)
+                state = await self.read_state()
+                if state.map_id != initial_map:
+                    self._log(f"_cross_border: crossed at alternate tile")
+                    return True
+
+        self._log(f"_cross_border: failed to cross {direction} border")
+        return False
+
+    async def _cross_warp(self, expected_map_id: int) -> bool:
+        """Find and use a warp to reach expected_map_id.
+
+        Checks cached warp data for a warp leading to expected_map_id.
+        Falls back to navigate_to_exit() for generic indoor exit.
+
+        Returns:
+            True if map changed.
+        """
+        state = await self.read_state()
+        initial_map = state.map_id
+        self._log(f"_cross_warp: looking for warp to map {expected_map_id}")
+
+        # Try to find a specific warp to the target map
+        result = await self._get_collision_map()
+        if result is not None:
+            collision_map, warp_points, entity_points, warps_data, player_pos, state = result
+
+            # Look for warps that lead to the expected map
+            for w in warps_data:
+                dest_map = w.get("dest_map", -1)
+                if dest_map == expected_map_id:
+                    wx, wy = w.get("x", -1), w.get("y", -1)
+                    if wx >= 0 and wy >= 0:
+                        self._log(f"_cross_warp: found targeted warp at ({wx},{wy}) → map {dest_map}")
+                        reached = await self.navigate_to(wx, wy)
+                        state = await self.read_state()
+                        if state.map_id != initial_map:
+                            return True
+                        # Might need to step onto the warp tile or press a direction
+                        for d in ["down", "up", "left", "right"]:
+                            await self.walk(d, 1)
+                            state = await self.read_state()
+                            if state.map_id != initial_map:
+                                return True
+                            # Walk back if we didn't warp
+                            reverse = {"down": "up", "up": "down", "left": "right", "right": "left"}
+                            await self.walk(reverse[d], 1)
+
+        # Fallback: use navigate_to_exit which walks to nearest warp
+        self._log(f"_cross_warp: no targeted warp found, using navigate_to_exit")
+        changed = await self.navigate_to_exit(max_attempts=30)
+        if changed:
+            state = await self.read_state()
+            self._log(f"_cross_warp: exited to map {state.map_id}")
+        return changed

@@ -910,6 +910,437 @@ ITEM_NAMES = {
 
 
 # ============================================================
+# Map Name -> ID reverse lookup
+# ============================================================
+
+MAP_NAME_TO_ID: dict[str, int] = {}
+for _id, _name in MAP_NAMES.items():
+    # Store both exact and normalized (uppercase, no spaces) forms
+    MAP_NAME_TO_ID[_name] = _id
+    MAP_NAME_TO_ID[_name.upper()] = _id
+    MAP_NAME_TO_ID[_name.upper().replace(" ", "_")] = _id
+
+
+# ============================================================
+# Map Adjacency Graph — static connections from pokeyellow headers
+# ============================================================
+# Each entry: source_map_id -> list of (dest_map_id, connection_type)
+# Connection types:
+#   "border_north"  — walk north off the map edge
+#   "border_south"  — walk south off the map edge
+#   "border_east"   — walk east off the map edge
+#   "border_west"   — walk west off the map edge
+#   "warp"          — use a warp tile (door/stairs) to reach dest
+#
+# Built from pret/pokeyellow data/maps/headers/*.asm
+
+MAP_GRAPH: dict[int, list[tuple[int, str]]] = {}
+
+def _add_edge(src: int, dst: int, conn_type: str):
+    MAP_GRAPH.setdefault(src, []).append((dst, conn_type))
+
+# --- Border connections (outdoor ↔ outdoor) ---
+# Pallet Town (0)
+_add_edge(0, 12, "border_north")   # → Route 1
+_add_edge(0, 32, "border_south")   # → Route 21
+
+# Route 1 (12)
+_add_edge(12, 1, "border_north")   # → Viridian City
+_add_edge(12, 0, "border_south")   # → Pallet Town
+
+# Viridian City (1)
+_add_edge(1, 13, "border_north")   # → Route 2
+_add_edge(1, 12, "border_south")   # → Route 1
+_add_edge(1, 33, "border_west")    # → Route 22
+
+# Route 2 (13)
+_add_edge(13, 2, "border_north")   # → Pewter City
+_add_edge(13, 1, "border_south")   # → Viridian City
+
+# Pewter City (2)
+_add_edge(2, 13, "border_south")   # → Route 2
+_add_edge(2, 14, "border_east")    # → Route 3
+
+# Route 3 (14)
+_add_edge(14, 15, "border_north")  # → Route 4
+_add_edge(14, 2, "border_west")    # → Pewter City
+
+# Route 4 (15)
+_add_edge(15, 14, "border_south")  # → Route 3
+_add_edge(15, 3, "border_east")    # → Cerulean City
+
+# Cerulean City (3)
+_add_edge(3, 35, "border_north")   # → Route 24
+_add_edge(3, 16, "border_south")   # → Route 5
+_add_edge(3, 15, "border_west")    # → Route 4
+_add_edge(3, 20, "border_east")    # → Route 9
+
+# Route 24 (35)
+_add_edge(35, 3, "border_south")   # → Cerulean City
+_add_edge(35, 36, "border_east")   # → Route 25
+
+# Route 25 (36)
+_add_edge(36, 35, "border_west")   # → Route 24
+
+# Route 5 (16)
+_add_edge(16, 3, "border_north")   # → Cerulean City
+_add_edge(16, 10, "border_south")  # → Saffron City
+
+# Route 6 (17)
+_add_edge(17, 10, "border_north")  # → Saffron City
+_add_edge(17, 5, "border_south")   # → Vermilion City
+
+# Route 7 (18)
+_add_edge(18, 6, "border_west")    # → Celadon City
+_add_edge(18, 10, "border_east")   # → Saffron City
+
+# Route 8 (19)
+_add_edge(19, 10, "border_west")   # → Saffron City
+_add_edge(19, 4, "border_east")    # → Lavender Town
+
+# Route 9 (20)
+_add_edge(20, 3, "border_west")    # → Cerulean City
+_add_edge(20, 21, "border_east")   # → Route 10
+
+# Route 10 (21)
+_add_edge(21, 20, "border_west")   # → Route 9
+_add_edge(21, 4, "border_south")   # → Lavender Town
+
+# Saffron City (10)
+_add_edge(10, 16, "border_north")  # → Route 5
+_add_edge(10, 17, "border_south")  # → Route 6
+_add_edge(10, 18, "border_west")   # → Route 7
+_add_edge(10, 19, "border_east")   # → Route 8
+
+# Lavender Town (4)
+_add_edge(4, 21, "border_north")   # → Route 10
+_add_edge(4, 23, "border_south")   # → Route 12
+_add_edge(4, 19, "border_west")    # → Route 8
+
+# Vermilion City (5)
+_add_edge(5, 17, "border_north")   # → Route 6
+_add_edge(5, 22, "border_east")    # → Route 11
+
+# Route 11 (22)
+_add_edge(22, 5, "border_west")    # → Vermilion City
+_add_edge(22, 23, "border_east")   # → Route 12
+
+# Route 12 (23)
+_add_edge(23, 4, "border_north")   # → Lavender Town
+_add_edge(23, 24, "border_south")  # → Route 13
+_add_edge(23, 22, "border_west")   # → Route 11
+
+# Route 13 (24)
+_add_edge(24, 23, "border_north")  # → Route 12
+_add_edge(24, 25, "border_west")   # → Route 14
+
+# Route 14 (25)
+_add_edge(25, 26, "border_west")   # → Route 15
+_add_edge(25, 24, "border_east")   # → Route 13
+
+# Route 15 (26)
+_add_edge(26, 7, "border_west")    # → Fuchsia City
+_add_edge(26, 25, "border_east")   # → Route 14
+
+# Celadon City (6)
+_add_edge(6, 27, "border_west")    # → Route 16
+_add_edge(6, 18, "border_east")    # → Route 7
+
+# Route 16 (27)
+_add_edge(27, 28, "border_south")  # → Route 17
+_add_edge(27, 6, "border_east")    # → Celadon City
+
+# Route 17 (28)
+_add_edge(28, 27, "border_north")  # → Route 16
+_add_edge(28, 29, "border_south")  # → Route 18
+
+# Route 18 (29)
+_add_edge(29, 28, "border_north")  # → Route 17
+_add_edge(29, 7, "border_east")    # → Fuchsia City
+
+# Fuchsia City (7)
+_add_edge(7, 30, "border_south")   # → Route 19
+_add_edge(7, 29, "border_west")    # → Route 18
+_add_edge(7, 26, "border_east")    # → Route 15
+
+# Route 19 (30)
+_add_edge(30, 7, "border_north")   # → Fuchsia City
+_add_edge(30, 31, "border_west")   # → Route 20
+
+# Route 20 (31)
+_add_edge(31, 8, "border_west")    # → Cinnabar Island
+_add_edge(31, 30, "border_east")   # → Route 19
+
+# Cinnabar Island (8)
+_add_edge(8, 32, "border_north")   # → Route 21
+_add_edge(8, 31, "border_east")    # → Route 20
+
+# Route 21 (32)
+_add_edge(32, 0, "border_north")   # → Pallet Town
+_add_edge(32, 8, "border_south")   # → Cinnabar Island
+
+# Route 22 (33)
+_add_edge(33, 34, "border_north")  # → Route 23
+_add_edge(33, 1, "border_east")    # → Viridian City
+
+# Route 23 (34)
+_add_edge(34, 9, "border_north")   # → Indigo Plateau
+_add_edge(34, 33, "border_south")  # → Route 22
+
+# Indigo Plateau (9)
+_add_edge(9, 34, "border_south")   # → Route 23
+
+# --- Warp connections (indoor ↔ outdoor, transit) ---
+
+# Parent map for each indoor map (warp exits to this outdoor map)
+# Maps that use LAST_MAP (0xFF) are grouped by city prefix.
+_INDOOR_PARENT: dict[int, int] = {
+    # Pallet Town buildings
+    37: 0,   # Player House 1F
+    38: 37,  # Player House 2F → 1F (stairs)
+    39: 0,   # Rival House
+    40: 0,   # Oak's Lab
+    # Viridian City buildings
+    41: 1,   # Viridian Pokemon Center
+    42: 1,   # Viridian Mart
+    43: 1,   # Viridian School
+    44: 1,   # Viridian Nickname House
+    45: 1,   # Viridian Gym
+    # Route 2 area
+    46: 13,  # Diglett's Cave (Route 2 entrance)
+    47: 13,  # Viridian Forest North Gate → Route 2
+    48: 13,  # Route 2 Trade House
+    49: 13,  # Route 2 Gate
+    50: 13,  # Viridian Forest South Gate → Route 2
+    51: 50,  # Viridian Forest (connects via gates)
+    # Pewter City buildings
+    52: 2,   # Pewter Museum 1F
+    53: 52,  # Pewter Museum 2F
+    54: 2,   # Pewter Gym
+    55: 2,   # Pewter Nidoran House
+    56: 2,   # Pewter Mart
+    57: 2,   # Pewter Speech House
+    58: 2,   # Pewter Pokemon Center
+    # Mt. Moon
+    59: 14,  # Mt. Moon 1F (entrance from Route 3 area)
+    60: 59,  # Mt. Moon B1F
+    61: 60,  # Mt. Moon B2F
+    # Cerulean City buildings
+    62: 3,   # Cerulean Trashed House
+    63: 3,   # Cerulean Melanie's House
+    64: 3,   # Cerulean Pokemon Center
+    65: 3,   # Cerulean Gym
+    66: 3,   # Bike Shop
+    67: 3,   # Cerulean Mart
+    68: 14,  # Mt. Moon Pokemon Center (on Route 3 area)
+    69: 3,   # Cerulean Trashed House Copy
+    # Route 5-8 gates and underground
+    70: 16,  # Route 5 Gate
+    71: 70,  # Underground Path (Route 5 entrance)
+    72: 16,  # Day Care (Route 5)
+    73: 17,  # Route 6 Gate
+    74: 73,  # Underground Path (Route 6 entrance)
+    76: 18,  # Route 7 Gate
+    77: 76,  # Underground Path (Route 7 entrance)
+    79: 19,  # Route 8 Gate
+    80: 79,  # Underground Path (Route 8 entrance)
+    # Rock Tunnel area
+    81: 21,  # Rock Tunnel Pokemon Center (Route 10)
+    82: 21,  # Rock Tunnel 1F
+    232: 82, # Rock Tunnel B1F
+    # Power Plant
+    83: 21,  # Power Plant (Route 10 area)
+    # Route 11-12 gates
+    84: 22,  # Route 11 Gate 1F
+    85: 22,  # Diglett's Cave (Route 11 entrance)
+    86: 84,  # Route 11 Gate 2F
+    87: 23,  # Route 12 Gate 1F
+    # Bill's House (Route 25)
+    88: 36,  # Bill's House
+    # Vermilion City buildings
+    89: 5,   # Vermilion Pokemon Center
+    90: 5,   # Pokemon Fan Club
+    91: 5,   # Vermilion Mart
+    92: 5,   # Vermilion Gym
+    93: 5,   # Vermilion Pidgey House
+    94: 5,   # Vermilion Dock
+    # SS Anne
+    95: 94,  # SS Anne 1F
+    96: 95,  # SS Anne 2F
+    97: 96,  # SS Anne 3F
+    98: 95,  # SS Anne B1F
+    # Victory Road / Pokemon League
+    108: 34, # Victory Road 1F (Route 23)
+    194: 108, # Victory Road 2F
+    198: 194, # Victory Road 3F
+    # Underground Paths (transit tunnels)
+    119: 71, # Underground Path N-S (from Route 5 underground entrance)
+    121: 77, # Underground Path W-E (from Route 7 underground entrance)
+    # Celadon City buildings
+    122: 6,  # Celadon Mart 1F
+    128: 6,  # Celadon Mansion 1F
+    133: 6,  # Celadon Pokemon Center
+    134: 6,  # Celadon Gym
+    135: 6,  # Game Corner
+    137: 6,  # Game Corner Prize Room
+    138: 6,  # Celadon Diner
+    139: 6,  # Celadon Chief House
+    140: 6,  # Celadon Hotel
+    # Rocket Hideout (under Game Corner)
+    199: 135, # Rocket Hideout B1F
+    200: 199, # Rocket Hideout B2F
+    201: 200, # Rocket Hideout B3F
+    202: 201, # Rocket Hideout B4F
+    # Lavender Town buildings
+    141: 4,  # Lavender Pokemon Center
+    142: 4,  # Pokemon Tower 1F
+    143: 142, # Pokemon Tower 2F
+    144: 143, # Pokemon Tower 3F
+    145: 144, # Pokemon Tower 4F
+    146: 145, # Pokemon Tower 5F
+    147: 146, # Pokemon Tower 6F
+    148: 147, # Pokemon Tower 7F
+    149: 4,  # Mr. Fuji's House
+    150: 4,  # Lavender Mart
+    151: 4,  # Lavender Cubone House
+    # Fuchsia City buildings
+    152: 7,  # Fuchsia Mart
+    153: 7,  # Fuchsia Bill's Grandpa House
+    154: 7,  # Fuchsia Pokemon Center
+    155: 7,  # Warden's House
+    156: 7,  # Safari Zone Gate
+    157: 7,  # Fuchsia Gym
+    158: 7,  # Fuchsia Meeting Room
+    # Safari Zone
+    220: 156, # Safari Zone Center
+    217: 220, # Safari Zone East
+    218: 220, # Safari Zone North
+    219: 220, # Safari Zone West
+    # Seafoam Islands
+    192: 31, # Seafoam Islands 1F (Route 20)
+    159: 192, # Seafoam Islands B1F
+    160: 159, # Seafoam Islands B2F
+    161: 160, # Seafoam Islands B3F
+    162: 161, # Seafoam Islands B4F
+    # Cinnabar Island buildings
+    165: 8,  # Pokemon Mansion 1F
+    166: 8,  # Cinnabar Gym
+    167: 8,  # Cinnabar Lab
+    171: 8,  # Cinnabar Pokemon Center
+    172: 8,  # Cinnabar Mart
+    # Pokemon Mansion floors
+    214: 165, # Pokemon Mansion 2F
+    215: 214, # Pokemon Mansion 3F
+    216: 165, # Pokemon Mansion B1F
+    # Indigo Plateau
+    174: 9,  # Indigo Plateau Lobby
+    245: 174, # Lorelei's Room
+    246: 245, # Bruno's Room
+    247: 246, # Agatha's Room
+    113: 247, # Lance's Room
+    120: 113, # Champion's Room
+    118: 120, # Hall of Fame
+    # Saffron City buildings
+    175: 10, # Copycat's House 1F
+    176: 175, # Copycat's House 2F
+    177: 10, # Fighting Dojo
+    178: 10, # Saffron Gym
+    179: 10, # Saffron Pidgey House
+    180: 10, # Saffron Mart
+    181: 10, # Silph Co. 1F
+    182: 10, # Saffron Pokemon Center
+    183: 10, # Mr. Psychic's House
+    # Silph Co. floors
+    207: 181, # Silph Co. 2F
+    208: 207, # Silph Co. 3F
+    209: 208, # Silph Co. 4F
+    210: 209, # Silph Co. 5F
+    211: 210, # Silph Co. 6F
+    212: 211, # Silph Co. 7F
+    213: 212, # Silph Co. 8F
+    233: 213, # Silph Co. 9F
+    234: 233, # Silph Co. 10F
+    235: 234, # Silph Co. 11F
+    # Route gates with upper floors
+    184: 26, # Route 15 Gate 1F
+    185: 184, # Route 15 Gate 2F
+    186: 27, # Route 16 Gate 1F
+    187: 186, # Route 16 Gate 2F
+    188: 27, # Route 16 Fly House
+    189: 23, # Route 12 Super Rod House
+    190: 29, # Route 18 Gate 1F
+    191: 190, # Route 18 Gate 2F
+    193: 33, # Route 22 Gate
+    195: 87, # Route 12 Gate 2F
+    163: 5,  # Vermilion Old Rod House
+    164: 7,  # Fuchsia Good Rod House
+    196: 5,  # Vermilion Trade House
+    229: 4,  # Name Rater's House (Lavender)
+    230: 3,  # Cerulean Badge House
+    # Cerulean Cave
+    228: 3,  # Cerulean Cave 1F
+    226: 228, # Cerulean Cave 2F
+    227: 228, # Cerulean Cave B1F
+    # Yellow-specific
+    248: 31, # Summer Beach House (Route 20)
+}
+
+# Build warp edges from parent map
+for child_id, parent_id in _INDOOR_PARENT.items():
+    _add_edge(child_id, parent_id, "warp")
+    _add_edge(parent_id, child_id, "warp")
+
+# --- Transit connections (caves/tunnels connecting two outdoor areas) ---
+# These are critical for pathfinding through areas that require going indoor
+
+# Viridian Forest: South Gate (50) ↔ Forest (51) ↔ North Gate (47)
+# (Already connected via _INDOOR_PARENT, but ensure the full chain exists)
+
+# Diglett's Cave: Route 2 entrance (46) ↔ Diglett's Cave (197) ↔ Route 11 entrance (85)
+_add_edge(46, 197, "warp")
+_add_edge(197, 46, "warp")
+_add_edge(85, 197, "warp")
+_add_edge(197, 85, "warp")
+
+# Underground Path N-S: Route 5 underground (71) ↔ path (119) ↔ Route 6 underground (74)
+_add_edge(74, 119, "warp")
+_add_edge(119, 74, "warp")
+
+# Underground Path W-E: Route 7 underground (77) ↔ path (121) ↔ Route 8 underground (80)
+_add_edge(80, 121, "warp")
+_add_edge(121, 80, "warp")
+
+# Mt. Moon: exit from B2F leads to Route 4
+_add_edge(61, 15, "warp")
+_add_edge(15, 61, "warp")
+
+# Rock Tunnel: B1F (232) connects to Route 10 area
+_add_edge(232, 21, "warp")
+_add_edge(21, 232, "warp")
+
+# Seafoam Islands: B4F connects to Cinnabar side (Route 20 west)
+# (Already connected through the chain)
+
+# Route 5 Gate connects Route 5 to Saffron
+_add_edge(70, 10, "warp")
+_add_edge(10, 70, "warp")
+
+# Route 6 Gate connects Route 6 to Saffron
+_add_edge(73, 10, "warp")
+_add_edge(10, 73, "warp")
+
+# Route 7 Gate connects Route 7 to Saffron/Celadon
+_add_edge(76, 10, "warp")
+_add_edge(10, 76, "warp")
+
+# Route 8 Gate connects Route 8 to Saffron
+_add_edge(79, 10, "warp")
+_add_edge(10, 79, "warp")
+
+del _add_edge  # Clean up module namespace
+
+
+# ============================================================
 # Helper functions
 # ============================================================
 

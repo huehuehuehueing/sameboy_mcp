@@ -529,6 +529,32 @@ class PokemonAgent:
             else:
                 self._log_action(f"  no pokecenter warp on this map")
 
+        elif action == "navigate_route":
+            dest_map_id = decision.get("dest_map_id")
+            dest_map_name = decision.get("dest_map_name")
+            if dest_map_id is None and dest_map_name:
+                from .pokemon_data import MAP_NAME_TO_ID
+                dest_map_id = MAP_NAME_TO_ID.get(dest_map_name)
+                if dest_map_id is None:
+                    # Try case-insensitive lookup
+                    dest_map_id = MAP_NAME_TO_ID.get(dest_map_name.upper())
+            if dest_map_id is not None:
+                from .pokemon_data import MAP_NAMES
+                dest_name = MAP_NAMES.get(dest_map_id, f"map_{dest_map_id}")
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos} → navigate_route to {dest_name} (map {dest_map_id})"
+                )
+                reached = await self._routines.navigate_route(dest_map_id)
+                if reached:
+                    self._log_action(f"  reached destination: {dest_name}")
+                else:
+                    self._log_action(f"  route navigation failed")
+            else:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos} → navigate_route: "
+                    f"unknown dest '{dest_map_name or dest_map_id}'"
+                )
+
         elif action == "collect_hidden":
             self._log_action(f"[{self._step_count}] {state.map_name} {pos} → collect_hidden (BFS)")
             reached = await self._routines.navigate_to_target("hidden_item")

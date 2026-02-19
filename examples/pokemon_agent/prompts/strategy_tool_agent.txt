@@ -46,6 +46,11 @@ explore. navigate_to uses coded BFS pathfinding that handles collision avoidance
 - Scouting unknown areas (no specific target in mind)
 - Moving in areas where the ASCII map is unreliable
 
+For CROSS-MAP travel (target on a different map), use navigate_route with dest_map_id
+or dest_map_name. It plans a route across map borders and warps automatically.
+Example: from Viridian Pokemon Center, navigate_route with dest_map_name="Pallet Town"
+will exit the PC, walk south through Viridian City to Route 1, then south to Pallet Town.
+
 WORKFLOW:
 1. ORIENT: Call render_ascii_map. Note your @ position and the target's position.
 2. NAVIGATE: If target coordinates are known, use navigate_to(x,y) for efficient BFS autopilot.
@@ -124,6 +129,11 @@ The outer agent loop reads your report and decides the next cycle.
   map, pick the coordinates of your target, and hand off. Much cheaper than explore. Include
   "interact": true if you want to press A on arrival.
 - "find_pokecenter" — auto-walks to nearest warp leading to a Pokemon Center
+- "navigate_route" with dest_map_id or dest_map_name — multi-map BFS autopilot.
+  Plans a route across map boundaries (borders and warps) and walks the entire path.
+  Use when your target is on a DIFFERENT map. Example: from Viridian Pokemon Center,
+  navigate_route with dest_map_name="Pallet Town" will exit the PC, walk south through
+  Viridian City to Route 1, then south to Pallet Town. Works for any connected maps.
 - "heal" — request auto-navigation to the nearest Pokemon Center
 - "wait" with frames — nothing actionable right now, wait and re-evaluate
 Always include "reasoning" explaining what you observed and why you chose this action.
