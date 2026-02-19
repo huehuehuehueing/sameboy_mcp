@@ -15,6 +15,14 @@ from .utils import require_rom
 # Global state cache (would be better as server attribute, but keeping simple)
 _state_cache: dict[str, dict] = {}
 
+# Currently loaded state (updated on load_state)
+_current_state: dict | None = None
+
+
+def get_current_state() -> dict | None:
+    """Return the currently loaded save state info, or None."""
+    return _current_state
+
 
 def register_state_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
     """Register save state tools with the MCP server."""
@@ -83,6 +91,8 @@ def register_state_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
             return {"error": result["error"]}
 
         if result.get("success"):
+            global _current_state
+            _current_state = {"state_id": state_id, "name": state_info["name"]}
             return {
                 "success": True,
                 "state_id": state_id,

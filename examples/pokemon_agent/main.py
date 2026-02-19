@@ -575,7 +575,7 @@ class PokemonAgent:
 
         # Emit game state to dashboard
         if self._event_sink:
-            self._event_sink.emit_state({
+            state_data = {
                 "mode": state.mode.name if state.mode else "UNKNOWN",
                 "map_name": state.map_name,
                 "map_id": state.map_id,
@@ -584,7 +584,15 @@ class PokemonAgent:
                 "party_count": state.party_count,
                 "badge_count": state.badge_count,
                 "step": self._step_count,
-            })
+            }
+            if self._llm_agent and self._llm_agent._client:
+                ct = self._llm_agent.cost_tracker
+                state_data["llm_model"] = self._llm_agent._model
+                state_data["llm_provider"] = self.config.provider
+                state_data["llm_cost"] = f"${ct.total_cost:.4f}"
+                state_data["llm_tokens"] = ct.total_input_tokens + ct.total_output_tokens
+                state_data["llm_steps"] = ct.step_count
+            self._event_sink.emit_state(state_data)
 
         # Detect map change and trigger area analysis
         # Require map data to be loaded (width/height > 0) — during OakSpeech,

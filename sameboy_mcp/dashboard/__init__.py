@@ -264,6 +264,12 @@ class DashboardServer:
             CommandType.DASHBOARD_SNAPSHOT, None, 1.0,
         )
         if result and not result.get("error"):
+            # Include current save state info if available
+            from ..tools.state import get_current_state
+            cur = get_current_state()
+            if cur:
+                result["current_state"] = cur
+
             for hook in self._snapshot_hooks:
                 try:
                     extra = hook(self._emu_thread)

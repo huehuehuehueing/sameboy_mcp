@@ -715,6 +715,13 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
                 # — don't update _hook_last_map_id so we retry next tick
                 pass
 
+            # Decode BCD money (3 bytes at WRAM_MONEY)
+            b0 = _read_byte(emu_thread, WRAM_MONEY)
+            b1 = _read_byte(emu_thread, WRAM_MONEY + 1)
+            b2 = _read_byte(emu_thread, WRAM_MONEY + 2)
+            _bcd = lambda b: (b >> 4) * 10 + (b & 0x0F)
+            money = _bcd(b0) * 10000 + _bcd(b1) * 100 + _bcd(b2)
+
             return {
                 "map_id": map_id,
                 "map_name": MAP_NAMES.get(map_id, f"Map {map_id}"),
@@ -723,6 +730,7 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
                 "party_count": _read_byte(emu_thread, 0xD162),
                 "badge_count": bin(_read_byte(emu_thread, 0xD355)).count("1"),
                 "in_battle": in_battle,
+                "money": money,
             }
 
         dashboard.register_snapshot_hook(pokemon_snapshot_hook)

@@ -142,6 +142,7 @@
       case "agent_state":
         lastAgentStateTime = performance.now();
         updateGameState(msg.data);
+        if (msg.data.llm_model) updateLlmStatus(msg.data);
         break;
       case "llm_message":
         addLlmMessage(msg.data);
@@ -177,13 +178,14 @@
       }
     }
     if (data.status) {
-      updateEmulatorStatus(data.status, data.activity);
+      updateEmulatorStatus(data.status, data.activity, data.current_state);
     }
     // Use plugin game_state from snapshot when no recent agent state
     if (data.game_state) {
       const agentStale = (performance.now() - lastAgentStateTime) > 5000;
       if (agentStale || lastAgentStateTime === 0) {
         updateGameState(data.game_state);
+        if (data.game_state.llm_model) updateLlmStatus(data.game_state);
       }
     }
   }
@@ -248,7 +250,7 @@
     disasmEl.innerHTML = html;
   }
 
-  function updateEmulatorStatus(status, activity) {
+  function updateEmulatorStatus(status, activity, currentState) {
     // Show "Active"/"Idle" instead of raw "PAUSED" when emulator is paused between commands
     let displayState = status.state || "—";
     if (displayState === "PAUSED" && activity) {
@@ -260,6 +262,10 @@
       ["ROM", status.rom_title || "—"],
       ["Frame", frameCount.toLocaleString()],
     ];
+    if (currentState) {
+      if (currentState.name) items.push(["Save", currentState.name]);
+      if (currentState.state_id) items.push(["State ID", currentState.state_id]);
+    }
     if (status.is_cgb != null) items.push(["CGB", status.is_cgb ? "Yes" : "No"]);
     if (status.trace_enabled) items.push(["Trace", "On"]);
     if (status.breakpoint_count) items.push(["BPs", status.breakpoint_count]);
@@ -278,8 +284,19 @@
     if (data.player_x != null) items.push(["Pos", `(${data.player_x}, ${data.player_y})`]);
     if (data.party_count != null) items.push(["Party", data.party_count]);
     if (data.badge_count != null) items.push(["Badges", `${data.badge_count}/8`]);
+    if (data.money != null) items.push(["Money", `¥${data.money.toLocaleString()}`]);
 
     updateStateGrid("game-status", items);
+  }
+
+  function updateLlmStatus(data) {
+    const items = [];
+    if (data.llm_model) items.push(["Model", data.llm_model]);
+    if (data.llm_provider) items.push(["Provider", data.llm_provider]);
+    if (data.llm_cost) items.push(["Cost", data.llm_cost]);
+    if (data.llm_tokens) items.push(["Tokens", data.llm_tokens.toLocaleString()]);
+    if (data.llm_steps) items.push(["Steps", data.llm_steps]);
+    if (items.length > 0) updateStateGrid("llm-status", items);
   }
 
   function updateStateGrid(sectionId, items) {
