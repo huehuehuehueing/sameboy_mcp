@@ -536,6 +536,16 @@ class PokemonAgent:
             from .pokemon_data import MAP_NAME_TO_ID, MAP_NAMES
             dest_map_id = decision.get("dest_map_id")
             dest_map_name = decision.get("dest_map_name")
+            # LLMs sometimes use alternative key names
+            if dest_map_id is None and dest_map_name is None:
+                for alt_key in ("destination", "map_name", "target", "map_id", "dest"):
+                    val = decision.get(alt_key)
+                    if val is not None:
+                        if isinstance(val, int):
+                            dest_map_id = val
+                        elif isinstance(val, str):
+                            dest_map_name = val
+                        break
 
             # Resolve name → id
             if dest_map_id is None and dest_map_name:

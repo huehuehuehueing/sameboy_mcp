@@ -915,8 +915,9 @@ ITEM_NAMES = {
 
 MAP_NAME_TO_ID: dict[str, int] = {}
 for _id, _name in MAP_NAMES.items():
-    # Store both exact and normalized (uppercase, no spaces) forms
+    # Store exact, lowercase, uppercase, and underscore-separated forms
     MAP_NAME_TO_ID[_name] = _id
+    MAP_NAME_TO_ID[_name.lower()] = _id
     MAP_NAME_TO_ID[_name.upper()] = _id
     MAP_NAME_TO_ID[_name.upper().replace(" ", "_")] = _id
 
