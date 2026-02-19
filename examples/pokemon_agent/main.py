@@ -443,8 +443,7 @@ class PokemonAgent:
         pos = f"({state.player_x},{state.player_y})"
         current_pos = (state.map_id, state.player_x, state.player_y)
 
-        if self._verbose:
-            self._log_action(f"  [debug] decision: {decision}")
+        print(f"  [debug] _execute_overworld_decision: action={action!r}, decision={decision}")
 
         if action == "explore":
             direction = decision.get("direction", "up")
@@ -534,51 +533,79 @@ class PokemonAgent:
 
         elif action == "navigate_route":
             from .pokemon_data import MAP_NAME_TO_ID, MAP_NAMES
+            print(f"  [nav-route] ENTER navigate_route handler")
+            print(f"  [nav-route] decision keys: {list(decision.keys())}")
+            print(f"  [nav-route] decision values: { {k: v for k, v in decision.items()} }")
             dest_map_id = decision.get("dest_map_id")
             dest_map_name = decision.get("dest_map_name")
+            print(f"  [nav-route] direct lookup: dest_map_id={dest_map_id!r}, dest_map_name={dest_map_name!r}")
+
             # LLMs sometimes use alternative key names
             if dest_map_id is None and dest_map_name is None:
+                print(f"  [nav-route] trying alternative key names...")
                 for alt_key in ("destination", "map_name", "target", "map_id", "dest"):
                     val = decision.get(alt_key)
                     if val is not None:
+                        print(f"  [nav-route] found alt key '{alt_key}' = {val!r}")
                         if isinstance(val, int):
                             dest_map_id = val
                         elif isinstance(val, str):
                             dest_map_name = val
                         break
+                else:
+                    print(f"  [nav-route] no alternative keys matched")
 
             # Resolve name → id
             if dest_map_id is None and dest_map_name:
+                print(f"  [nav-route] resolving name {dest_map_name!r} -> id")
                 dest_map_id = MAP_NAME_TO_ID.get(dest_map_name)
+                print(f"  [nav-route]   exact lookup: {dest_map_id}")
                 if dest_map_id is None:
                     dest_map_id = MAP_NAME_TO_ID.get(dest_map_name.upper())
+                    print(f"  [nav-route]   upper lookup: {dest_map_id}")
 
             # Fallback: extract destination from reasoning or active instruction
             if dest_map_id is None:
+                print(f"  [nav-route] dest still None, trying fallback extraction")
                 fallback_texts = []
                 if decision.get("reasoning"):
                     fallback_texts.append(decision["reasoning"])
+                    print(f"  [nav-route]   reasoning: {decision['reasoning']!r}")
                 if self._active_instruction:
                     fallback_texts.append(self._active_instruction)
+                    print(f"  [nav-route]   instruction: {self._active_instruction!r}")
+                if not fallback_texts:
+                    print(f"  [nav-route]   NO fallback texts available")
                 for text in fallback_texts:
                     text_upper = text.upper()
-                    # Try each known map name (longest first to avoid partial matches)
                     sorted_names = sorted(MAP_NAME_TO_ID.keys(), key=len, reverse=True)
                     for name in sorted_names:
                         if name in text_upper:
                             dest_map_id = MAP_NAME_TO_ID[name]
                             dest_map_name = name
-                            self._log_action(f"  navigate_route: extracted dest '{name}' from fallback text")
+                            print(f"  [nav-route]   MATCHED '{name}' -> map {dest_map_id}")
                             break
                     if dest_map_id is not None:
                         break
+                if dest_map_id is None:
+                    print(f"  [nav-route]   fallback extraction FAILED")
+
+            print(f"  [nav-route] FINAL: dest_map_id={dest_map_id!r}, dest_map_name={dest_map_name!r}")
 
             if dest_map_id is not None:
                 dest_name = MAP_NAMES.get(dest_map_id, f"map_{dest_map_id}")
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} {pos} → navigate_route to {dest_name} (map {dest_map_id})"
                 )
-                reached = await self._routines.navigate_route(dest_map_id)
+                print(f"  [nav-route] CALLING self._routines.navigate_route({dest_map_id})")
+                try:
+                    reached = await self._routines.navigate_route(dest_map_id)
+                    print(f"  [nav-route] navigate_route returned: {reached}")
+                except Exception as e:
+                    print(f"  [nav-route] navigate_route EXCEPTION: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    reached = False
                 if reached:
                     self._log_action(f"  reached destination: {dest_name}")
                 else:
@@ -926,7 +953,9 @@ Use tools to analyze the situation, then call report_result with your action."""
                     await self._routines.wait_frames(60)
                     return True
 
+                print(f"  [debug] BEFORE _execute_overworld_decision, action={decision.get('action')!r}")
                 await self._execute_overworld_decision(decision, state)
+                print(f"  [debug] AFTER _execute_overworld_decision returned")
 
                 # Instruction fulfilled — clear it so the loop stops.
                 # Autopilot was turned on just to serve the instruction,
