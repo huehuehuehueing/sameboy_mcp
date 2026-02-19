@@ -17,7 +17,10 @@ from .config import AgentConfig
 from .cost_tracker import CostTracker
 
 
-# MCP tools exposed to the LLM as OpenAI functions
+# MCP tools exposed to the LLM as OpenAI functions.
+# NOTE: Only observation tools + report_result are provided.
+# The LLM must NOT press keys or run frames directly — it reports
+# a decision via report_result, and the agent executes it.
 MCP_TOOLS = [
     {
         "type": "function",
@@ -32,56 +35,6 @@ MCP_TOOLS = [
                 },
                 "required": ["address"],
             },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "press_key",
-            "description": "Press a Game Boy button for a number of frames",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string", "enum": ["a", "b", "start", "select", "up", "down", "left", "right"]},
-                    "frames": {"type": "integer", "description": "Frames to hold button", "default": 8},
-                },
-                "required": ["key"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_frames",
-            "description": "Run the emulator for N frames without input",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "count": {"type": "integer", "description": "Number of frames to run"},
-                },
-                "required": ["count"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "capture_screen",
-            "description": "Capture the current screen as a PNG image",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "format": {"type": "string", "enum": ["png"], "default": "png"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_registers",
-            "description": "Get CPU register values (AF, BC, DE, HL, SP, PC)",
-            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -429,41 +382,31 @@ class LLMToolAgent:
 
 # System prompts for different decision types
 
-BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle AI. Use the provided tools to analyze the battle state and decide your action.
+BATTLE_SYSTEM_PROMPT = """You are a Pokemon battle AI. Analyze the state and decide.
 
-Available memory addresses for battle info:
+You can use read_memory to check battle info:
 - 0xD057: Battle type (1=wild, 2=trainer)
 - 0xCFE5: Enemy HP (2 bytes, little-endian)
 - 0xD014: Your active Pokemon HP (2 bytes)
 
-After analyzing the state, call report_result with your decision:
+You MUST call report_result with your decision. Do NOT skip it.
 - action: "move" with index 0-3 for which move to use
 - action: "run" to flee from wild battles
 - action: "switch" with index 0-5 for party Pokemon
-- action: "item" with index for bag item
+- action: "item" with index for bag item"""
 
-Always call report_result to provide your final decision."""
+STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI. You observe the game state and report a decision. You do NOT control the game directly.
 
-STRATEGY_SYSTEM_PROMPT = """You are a Pokemon game AI deciding what to do in the overworld.
+WORKFLOW: 1) Read the screen with decode_screen_text. 2) Optionally read the map with render_ascii_map. 3) Call report_result with your decision. That's it — observe then decide.
 
-KEY TOOLS — use these to understand the game state:
-- decode_screen_text: READ THE SCREEN first. Shows dialog, menus, signs.
-- render_ascii_map: See the full area map with walls, warps, NPCs, player.
-- read_memory: Check specific memory addresses when needed.
-- capture_screen: Visual screenshot (use decode_screen_text instead when possible).
+CRITICAL: You MUST call report_result before your turns run out. Do not waste turns — call it after 1-2 observation tools.
 
-The Area Analysis in context tells you about NPCs, items, and exits.
+When an operator instruction is present, follow it exactly.
 
-IMPORTANT: When an operator instruction is present, follow it exactly.
-Use decode_screen_text and render_ascii_map to understand the game state
-before deciding. Do NOT guess — read the screen.
-
-After analyzing, call report_result with your decision:
-- action: "explore" with direction (up/down/left/right) and steps
-- action: "collect_item" - pick up the nearest item
-- action: "find_exit" - auto-navigate to nearest exit/warp
-- action: "heal" - go to Pokecenter
-- action: "interact" - talk to NPC/object in front
-- action: "wait" with frames to pause
-
-Always call report_result to provide your final decision."""
+report_result actions:
+- "explore" with direction (up/down/left/right) and steps (1-5)
+- "interact" — press A to talk to NPC/object the player is facing
+- "find_exit" — auto-navigate to nearest exit/warp
+- "collect_item" — pick up nearest item
+- "heal" — go to Pokecenter
+- "wait" with frames to pause"""
