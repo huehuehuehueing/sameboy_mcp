@@ -89,6 +89,14 @@ class PokemonAgent:
         self._movement_history: list[tuple[int, int, int, str]] = []  # (map_id, x, y, direction) for backtracking
         self._max_history = 50  # Keep last N movements
 
+        # Intro name entry counter: incremented after each successful
+        # enter_name() call.  Once >= 2, both player and rival names have
+        # been entered via the keyboard → we're past OakSpeech.
+        # This replaces the unreliable state.names_set (which is True
+        # from the start of OakSpeech due to debug names in RAM).
+        self._intro_names_done: int = 0
+        self._intro_transfer_done : bool = False  # True once we detect the final map transfer after OakSpeech
+
         # Autopilot: when True, LLM runs every cycle autonomously.
         # When False, LLM only runs for one-shot prompt injections.
         # Resume/Stop buttons toggle this.
@@ -103,6 +111,33 @@ class PokemonAgent:
         print(msg)
         if self._event_sink:
             self._event_sink.emit_llm_message("agent", msg)
+
+    async def _log_intro_debug(self, state):
+        """Log debug info for intro sequence: names, PC, disassembly."""
+        from examples.pokemon_agent import memory_map as mem
+        # Read and decode player/rival names (up to 11 bytes, terminated 0x50)
+        player_raw = await self.call_tool("read_memory", {"address": mem.WRAM_PLAYER_NAME, "length": 11})
+        rival_raw = await self.call_tool("read_memory", {"address": mem.WRAM_RIVAL_NAME, "length": 11})
+        p_bytes = player_raw.get("bytes", []) if isinstance(player_raw, dict) else []
+        r_bytes = rival_raw.get("bytes", []) if isinstance(rival_raw, dict) else []
+        p_name = mem.decode_text(p_bytes, max_len=11)
+        r_name = mem.decode_text(r_bytes, max_len=11)
+        p_hex = " ".join(f"{b:02X}" for b in p_bytes[:7])
+        r_hex = " ".join(f"{b:02X}" for b in r_bytes[:7])
+        print(f"  [debug] player='{p_name}' ({p_hex}) | rival='{r_name}' ({r_hex})")
+        print(f"  [debug] PC=0x{state.pc:04X} | names_set={state.names_set} | intro_names_done={self._intro_names_done} | game_timer={state.game_timer_counting}")
+        # Disassemble 8 instructions at current PC
+        try:
+            dis = await self.call_tool("disassemble", {"address": state.pc, "count": 8})
+            if isinstance(dis, dict) and "instructions" in dis:
+                lines = []
+                for instr in dis["instructions"]:
+                    addr = instr.get("address", "????")
+                    text = instr.get("text", "???")
+                    lines.append(f"    {addr}: {text}")
+                print("  [debug] disasm:\n" + "\n".join(lines))
+        except Exception as e:
+            print(f"  [debug] disasm error: {e}")
 
     async def call_tool(self, name: str, args: dict):
         """Call an MCP tool and return result."""
@@ -499,7 +534,14 @@ class PokemonAgent:
             })
 
         # Detect map change and trigger area analysis
-        if state.map_id != self._last_analyzed_map_id and state.map_id > 0:
+        # Require map data to be loaded (width/height > 0) — during OakSpeech,
+        # map_id may change to 38 before EnterMap loads the actual map data
+        map_ready = state.map_info and state.map_info.width > 0 and state.map_info.height > 0
+        if state.map_id != self._last_analyzed_map_id and state.map_id > 0 and map_ready:
+            if state.map_id == 38 and self._intro_names_done == 2:
+                # we finished the intro finally
+                self._log_action("Intro sequence complete: ready for exploration!")
+                self._intro_transfer_done = True
             await self._analyze_new_area(state)
 
         if self.config.log_state:
@@ -613,6 +655,54 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                     await self._routines.execute_battle_move(0)
 
             case GameMode.OVERWORLD:
+                # If game is ignoring input (post-intro cutscene)
+                if state.ignore_input > 10:
+                    screen_preview = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        text_lines = [l for l in state.screen_text.lines if l.strip()]
+                        screen_preview = " | ".join(text_lines)[:80]
+
+                    has_prompt = any("\u25bc" in l for l in (state.screen_text.lines if state.screen_text else []))
+                    if has_prompt:
+                        # ▼ prompt — text system waiting for input, safe to press A
+                        self._log_action(
+                            f"[{self._step_count}] {state.map_name} — text ▼, pressing A"
+                            f"  [screen: {screen_preview}]"
+                        )
+                        await self._routines.press("a", 4)
+                        await self._routines.wait_frames(30)
+                    elif state.joypad_sim != 0:
+                        # Game is simulating joypad (scripted sequence) —
+                        # don't press A, it interferes
+                        self._log_action(
+                            f"[{self._step_count}] {state.map_name} — scripted sequence "
+                            f"(sim={state.joypad_sim}, counter={state.ignore_input}), waiting"
+                            f"  [screen: {screen_preview}]"
+                        )
+                    elif self._intro_names_done >= 2 and state.party_count == 0 and state.map_id == 38:
+                        # Post-intro transition: player at (3,6) facing UP in
+                        # Player House 2F.  DO NOT press A — it triggers the
+                        # hidden SNES event at (3,5) causing an infinite loop.
+                        # Just wait for ignore_input to count down to 0.
+                        self._log_action(
+                            f"[{self._step_count}] {state.map_name} — post-intro, waiting "
+                            f"(ignore_input={state.ignore_input}, timer={state.game_timer_counting})"
+                        )
+                        await self._log_intro_debug(state)
+                    else:
+                        # Normal ignore_input (dialog transition) — press A
+                        self._log_action(
+                            f"[{self._step_count}] {state.map_name} — input blocked "
+                            f"(counter={state.ignore_input}), pressing A"
+                            f"  [screen: {screen_preview}]"
+                        )
+                        for _ in range(3):
+                            await self._routines.press("a", 6)
+                            await self._routines.wait_frames(15)
+
+                    await self._routines.wait_frames(self.config.cycle_frames)
+                    return True
+
                 # Track position for stuck detection
                 current_pos = (state.map_id, state.player_x, state.player_y)
                 if current_pos == self._last_position:
@@ -684,6 +774,35 @@ Use tools to analyze the situation, then call report_result with your action."""
                     self._active_instruction = None
                     self._autopilot = False
 
+            case GameMode.DIALOG | GameMode.MENU if state.party_count == 0 and state.badge_count == 0:
+                # Intro phase (before getting starter Pokemon) — use coded
+                # routines instead of LLM to advance Oak's dialog, handle
+                # preset name lists, etc.  Deterministic and free.
+                # Always press A: the text engine reads hJoyPressed directly
+                # (bypasses wIgnoreInputCounter), so A always advances dialog.
+                screen_preview = ""
+                if state.screen_text and state.screen_text.has_text:
+                    text_lines = [l for l in state.screen_text.lines if l.strip()]
+                    screen_preview = " | ".join(text_lines)[:80]
+                if not state.names_set and self._intro_names_done < 2:
+                    print(state.map_id, state.player_x, state.player_y)
+                    result = await self._routines.advance_intro()
+                    self._log_action(
+                        f"[{self._step_count}] Intro — {result}"
+                        f"  [screen: {screen_preview}]"
+                    )
+                    await self._log_intro_debug(state)
+                else:
+                    # Both names entered — keep pressing A to finish
+                    # remaining OakSpeech dialog (shrink animation, etc.)
+                    # until SpecialEnterMap sets game_timer_counting.
+                    result = await self._routines.advance_intro()
+                    self._log_action(
+                        f"[{self._step_count}] Intro (post-names) — {result}"
+                        f"  [screen: {screen_preview}]"
+                    )
+                    await self._log_intro_debug(state)
+
             case GameMode.DIALOG | GameMode.MENU if self._autopilot or self._active_instruction:
                 # Short LLM call focused only on the current dialog/menu.
                 # Uses DIALOG_SYSTEM_PROMPT (no exploration) and low max_turns
@@ -723,6 +842,68 @@ Call report_result as soon as the dialog closes (blank text_lines)."""
                     self._log_action(f"  instruction complete, waiting for next prompt")
                     self._active_instruction = None
                     self._autopilot = False
+
+            case GameMode.TITLE_SCREEN:
+                screen_preview = ""
+                if state.screen_text and state.screen_text.has_text:
+                    screen_preview = " | ".join(
+                        l for l in state.screen_text.lines if l.strip()
+                    )[:80]
+                self._log_action(
+                    f"[{self._step_count}] Title Screen — pressing Start"
+                    f"  [screen: {screen_preview}]"
+                )
+                await self._routines.handle_title_screen()
+
+            case GameMode.MAIN_MENU:
+                screen_preview = ""
+                if state.screen_text and state.screen_text.has_text:
+                    text_lines = [l for l in state.screen_text.lines if l.strip()]
+                    screen_preview = " | ".join(text_lines)[:80]
+                self._log_action(
+                    f"[{self._step_count}] Main Menu (cursor={state.menu_cursor})"
+                    f" — selecting New Game  [screen: {screen_preview}]"
+                )
+                await self._routines.handle_main_menu(select_new_game=True)
+
+            case GameMode.INTRO:
+                screen_preview = ""
+                if state.screen_text and state.screen_text.has_text:
+                    text_lines = [l for l in state.screen_text.lines if l.strip()]
+                    screen_preview = " | ".join(text_lines)[:80]
+                result = await self._routines.advance_intro()
+                self._log_action(
+                    f"[{self._step_count}] Intro — {result}"
+                    f"  [screen: {screen_preview}]"
+                )
+                await self._log_intro_debug(state)
+
+            case GameMode.NAME_ENTRY:
+                screen_preview = ""
+                if state.screen_text and state.screen_text.has_text:
+                    text_lines = [l for l in state.screen_text.lines if l.strip()]
+                    screen_preview = " | ".join(text_lines)[:80]
+                # Detect rival naming from screen text — naming_type memory
+                # (0xCF91) reads 0 for both player and rival screens
+                screen_text_upper = ""
+                if state.screen_text and state.screen_text.has_text:
+                    screen_text_upper = state.screen_text.full_text.upper()
+                if "RIVAL" in screen_text_upper or "HIS NAME" in screen_text_upper:
+                    name = "GARY"
+                else:
+                    name = "ASH"
+                self._log_action(
+                    f"[{self._step_count}] Name Entry — typing '{name}'"
+                    f"  [screen: {screen_preview}]"
+                )
+                result = await self._routines.enter_name(name)
+                if result:
+                    self._intro_names_done += 1
+                    self._log_action(f"  name entered ({self._intro_names_done}/2 done)")
+
+            case GameMode.WHITEOUT:
+                self._log_action(f"[{self._step_count}] Whiteout — advancing text")
+                await self._routines.handle_whiteout()
 
             case _:
                 # Non-battle/overworld modes (name entry, intro, etc.)
