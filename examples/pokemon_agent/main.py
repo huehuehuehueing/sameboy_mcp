@@ -683,6 +683,10 @@ class PokemonAgent:
                 # Build battle context for LLM with full pre-read data
                 battle_context = self._build_battle_context(state)
 
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} BATTLE MODE: {my_name} vs {enemy_name}"
+                )
+
                 # Use LLM tool agent for battle decisions
                 decision = await self._llm_agent.run_with_tools(
                     BATTLE_SYSTEM_PROMPT,
@@ -990,6 +994,8 @@ Navigate it and call report_result when the dialog closes (blank text_lines)."""
                 await self._routines.handle_whiteout()
 
             case _:
+                self._log_action(f"CATCH-ALL: {state.map_name} — mode {state.mode.name if state.mode else 'UNKNOWN'}")
+
                 # Non-battle/overworld modes (name entry, intro, etc.)
                 mode_name = state.mode.name if state.mode else "UNKNOWN"
                 if self._active_instruction:
