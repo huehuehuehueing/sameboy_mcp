@@ -797,13 +797,16 @@ class PokemonAgent:
                     f"[{self._step_count}] {state.map_name} BATTLE MODE: {my_name} vs {enemy_name}"
                 )
 
+                # Use full strategy tools when operator instruction is active
+                active_tools = self._strategy_tools if self._active_instruction else self._battle_tools
+
                 # Use LLM tool agent for battle decisions
                 decision = await self._llm_agent.run_with_tools(
-                    BATTLE_SYSTEM_PROMPT,
+                    STRATEGY_SYSTEM_PROMPT if self._active_instruction else BATTLE_SYSTEM_PROMPT,
                     battle_context,
                     max_turns=60,
-                    tools=self._battle_tools,
-                    cache_key="battle",
+                    tools=active_tools,
+                    cache_key="strategy" if self._active_instruction else "battle",
                 )
                 if self._handle_stopped_decision(decision):
                     return True
@@ -1013,12 +1016,16 @@ Use tools to analyze the situation, then call report_result with your action."""
 
 Navigate it and call report_result when the dialog closes (blank text_lines)."""
 
+                # Use full strategy tools when operator instruction is active
+                # (it may need save states, cheats, etc. unrelated to dialog)
+                active_tools = self._strategy_tools if self._active_instruction else self._dialog_tools
+
                 decision = await self._llm_agent.run_with_tools(
-                    DIALOG_SYSTEM_PROMPT,
+                    STRATEGY_SYSTEM_PROMPT if self._active_instruction else DIALOG_SYSTEM_PROMPT,
                     dialog_context,
                     max_turns=20,
-                    tools=self._dialog_tools,
-                    cache_key="dialog",
+                    tools=active_tools,
+                    cache_key="strategy" if self._active_instruction else "dialog",
                 )
                 if self._handle_stopped_decision(decision):
                     return True
