@@ -35,6 +35,7 @@ class DashboardServer:
         self._snapshot_task: asyncio.Task | None = None
         self._agent_sink: DashboardEventSink | None = None
         self._snapshot_hooks: list = []
+        self._last_agent_actions: list[dict] | None = None
 
     @property
     def event_bus(self) -> EventBus:
@@ -143,11 +144,21 @@ class DashboardServer:
     async def _ws_sender(self, websocket: WebSocket, queue: asyncio.Queue[Event]) -> None:
         """Forward events from the EventBus to the WebSocket client."""
         try:
+            # Send stored agent actions on connect so late-joining clients see buttons
+            if self._last_agent_actions is not None:
+                await websocket.send_text(json.dumps({
+                    "type": "agent_actions",
+                    "data": {"actions": self._last_agent_actions},
+                }))
+
             while True:
                 event = await queue.get()
                 if event.type == EventType.FRAME:
                     await websocket.send_bytes(event.data)
                 else:
+                    # Cache action registries for late-joining clients
+                    if event.type == EventType.AGENT_ACTIONS and "actions" in (event.data or {}):
+                        self._last_agent_actions = event.data["actions"]
                     msg = {
                         "type": event.type.name.lower(),
                         "data": event.data,

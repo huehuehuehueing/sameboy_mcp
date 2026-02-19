@@ -383,7 +383,7 @@ class PokemonAgent:
                     dist_y = abs(warp.y - state.player_y)
                     print(f"  [warp] ({warp.x},{warp.y}) -> map {warp.dest_map} (dist: {dist_x + dist_y})")
 
-        # Check for pending dashboard actions
+        # Check for pending dashboard actions (always take priority)
         if self._event_sink:
             pending = self._event_sink.get_pending_actions()
             if pending:
@@ -391,6 +391,15 @@ class PokemonAgent:
                 if handled:
                     await self._routines.wait_frames(self.config.cycle_frames)
                     return True
+
+        # When LLM is unavailable, skip all coded routines — wait for dashboard actions
+        if self._llm_agent and not self._llm_agent.is_available:
+            if self._step_count % 30 == 0:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} — LLM unavailable, use dashboard actions"
+                )
+            await self._routines.wait_frames(60)
+            return True
 
         # Act based on game mode
         match state.mode:
