@@ -553,7 +553,8 @@ class PokemonAgent:
             return True
 
         if self._llm_agent and not self._llm_agent.is_available:
-            if self._step_count % 30 == 0:
+            # Always log when there's an active instruction waiting
+            if self._active_instruction or self._step_count % 30 == 0:
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} — LLM unavailable, use dashboard actions"
                 )
@@ -704,6 +705,9 @@ Call report_result as soon as the dialog closes (blank text_lines)."""
                 )
 
                 if decision.get("_no_llm"):
+                    self._log_action(
+                        f"[{self._step_count}] {state.map_name} — LLM unavailable (dialog), use dashboard"
+                    )
                     await self._routines.wait_frames(60)
                     return True
 
@@ -722,8 +726,45 @@ Call report_result as soon as the dialog closes (blank text_lines)."""
 
             case _:
                 # Non-battle/overworld modes (name entry, intro, etc.)
-                # are handled via dashboard actions only
-                await self._routines.wait_frames(self.config.cycle_frames)
+                mode_name = state.mode.name if state.mode else "UNKNOWN"
+                if self._active_instruction:
+                    # Mode is unexpected but user gave an instruction —
+                    # treat as overworld so the LLM can still work on it.
+                    self._log_action(
+                        f"[{self._step_count}] {state.map_name} — "
+                        f"mode {mode_name}, treating as overworld for instruction"
+                    )
+                    # Re-use the overworld handler by falling through to it
+                    area_context = ""
+                    if self._area_analyzer:
+                        area_context = self._area_analyzer.get_area_context_for_llm(
+                            state.map_id, state.player_x, state.player_y
+                        )
+                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._active_instruction}]\nFollow this instruction.\n\n"
+                    strategy_context = f"""{operator_instruction}Overworld state:
+Map: {state.map_name} (ID: {state.map_id})
+Position: ({state.player_x}, {state.player_y})
+Party size: {state.party_count}
+Badges: {state.badge_count}/8
+
+Area Analysis:
+{area_context}
+
+Use tools to analyze the situation, then call report_result with your action."""
+
+                    decision = await self._llm_agent.run_with_tools(
+                        STRATEGY_SYSTEM_PROMPT,
+                        strategy_context,
+                        max_turns=60,
+                    )
+                    if not decision.get("_no_llm"):
+                        await self._execute_overworld_decision(decision, state)
+                    if self._active_instruction:
+                        self._log_action(f"  instruction complete, waiting for next prompt")
+                        self._active_instruction = None
+                        self._autopilot = False
+                else:
+                    await self._routines.wait_frames(self.config.cycle_frames)
 
         # Run some frames between decisions
         await self._routines.wait_frames(self.config.cycle_frames)
