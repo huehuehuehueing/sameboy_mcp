@@ -36,6 +36,8 @@ class DashboardServer:
         self._agent_sink: DashboardEventSink | None = None
         self._snapshot_hooks: list = []
         self._last_agent_actions: list[dict] | None = None
+        self._panel_registry: list[dict] | None = None
+        self._last_panel_data: dict[str, dict] = {}
 
     @property
     def event_bus(self) -> EventBus:
@@ -46,6 +48,14 @@ class DashboardServer:
         loop = asyncio.get_running_loop()
         self._agent_sink = DashboardEventSink(self._event_bus, loop)
         return self._agent_sink
+
+    def register_panels(self, panels: list[dict]) -> None:
+        """Register plugin panels and broadcast to connected clients."""
+        self._panel_registry = panels
+        self._event_bus.publish(Event(
+            type=EventType.PANEL_REGISTRY,
+            data={"panels": panels},
+        ))
 
     def register_snapshot_hook(self, hook) -> None:
         """Register a plugin hook called during each snapshot poll.
@@ -144,11 +154,21 @@ class DashboardServer:
     async def _ws_sender(self, websocket: WebSocket, queue: asyncio.Queue[Event]) -> None:
         """Forward events from the EventBus to the WebSocket client."""
         try:
-            # Send stored agent actions on connect so late-joining clients see buttons
+            # Replay cached state for late-joining clients
             if self._last_agent_actions is not None:
                 await websocket.send_text(json.dumps({
                     "type": "agent_actions",
                     "data": {"actions": self._last_agent_actions},
+                }))
+            if self._panel_registry is not None:
+                await websocket.send_text(json.dumps({
+                    "type": "panel_registry",
+                    "data": {"panels": self._panel_registry},
+                }))
+            for panel_data in self._last_panel_data.values():
+                await websocket.send_text(json.dumps({
+                    "type": "panel_data",
+                    "data": panel_data,
                 }))
 
             while True:
@@ -156,9 +176,13 @@ class DashboardServer:
                 if event.type == EventType.FRAME:
                     await websocket.send_bytes(event.data)
                 else:
-                    # Cache action registries for late-joining clients
+                    # Cache for late-joining clients
                     if event.type == EventType.AGENT_ACTIONS and "actions" in (event.data or {}):
                         self._last_agent_actions = event.data["actions"]
+                    elif event.type == EventType.PANEL_REGISTRY and "panels" in (event.data or {}):
+                        self._panel_registry = event.data["panels"]
+                    elif event.type == EventType.PANEL_DATA and "panel_id" in (event.data or {}):
+                        self._last_panel_data[event.data["panel_id"]] = event.data
                     msg = {
                         "type": event.type.name.lower(),
                         "data": event.data,

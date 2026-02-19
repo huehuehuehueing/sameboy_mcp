@@ -152,6 +152,9 @@
       case "agent_decision":
         addLlmDecision(msg.data);
         break;
+      case "panel_registry":
+        handlePanelRegistry(msg.data);
+        break;
       case "panel_data":
         updatePanel(msg.data);
         break;
@@ -318,12 +321,11 @@
 
   function addLlmToolCall(data) {
     const name = data.name || "?";
-    const args = data.args ? JSON.stringify(data.args) : "";
-    const result = data.result ? JSON.stringify(data.result).slice(0, 200) : "";
+    const result = data.result != null ? String(data.result) : "";
 
     const el = document.createElement("div");
     el.className = "llm-msg role-tool";
-    el.innerHTML = `<span class="msg-role">tool</span>${esc(name)}(${esc(args)})`;
+    el.innerHTML = `<span class="msg-role">tool</span><strong>${esc(name)}</strong>()`;
     if (result) {
       el.innerHTML += ` \u2192 ${esc(result)}`;
     }
@@ -361,14 +363,122 @@
 
   // ── Plugin panels ───────────────────────────────
 
+  const registeredPanels = {};
+
+  function handlePanelRegistry(data) {
+    const panels = data.panels || [];
+    const container = document.getElementById("plugin-panels");
+    if (!container) return;
+
+    container.innerHTML = "";
+    for (const panel of panels) {
+      registeredPanels[panel.id] = panel;
+      const el = document.createElement("div");
+      el.id = `panel-${panel.id}`;
+      el.className = `panel panel-${panel.type || "generic"}`;
+      el.innerHTML = `
+        <div class="panel-header">
+          <span class="indicator active"></span>
+          ${esc(panel.title || panel.id)}
+        </div>
+        <div class="panel-body">Waiting for data\u2026</div>`;
+      container.appendChild(el);
+    }
+  }
+
   function updatePanel(data) {
     const id = data.panel_id;
-    const content = data.content || "";
+    const panelType = data.type || "";
+    const content = data.content || {};
     const el = document.getElementById(`panel-${id}`);
-    if (el) {
-      const body = el.querySelector(".panel-body");
-      if (body) body.textContent = content;
+    if (!el) return;
+
+    const body = el.querySelector(".panel-body");
+    if (!body) return;
+
+    switch (panelType) {
+      case "ascii_map":
+        renderAsciiMap(body, content);
+        break;
+      case "screen_text":
+        renderScreenText(body, content);
+        break;
+      default:
+        body.textContent = typeof content === "string" ? content : JSON.stringify(content).slice(0, 300);
     }
+  }
+
+  // ASCII map character → CSS class
+  const MAP_CHAR_CLASSES = {
+    "@": "mc-player",
+    "W": "mc-warp",
+    "T": "mc-trainer",
+    "I": "mc-item",
+    "N": "mc-npc",
+    "G": "mc-grass",
+    "C": "mc-pc",
+    "B": "mc-book",
+    "!": "mc-sign",
+    "#": "mc-wall",
+    ".": "mc-walk",
+  };
+
+  function renderAsciiMap(body, data) {
+    const ascii = data.ascii || "";
+    const lines = ascii.split("\n");
+    let html = "";
+    for (const line of lines) {
+      // Header lines (column numbers) start with spaces
+      if (line.match(/^\s+\d/)) {
+        html += `<div class="map-row"><span class="mc-header">${esc(line)}</span></div>`;
+        continue;
+      }
+      // Map rows: "NN:CHARS"
+      const match = line.match(/^(\s*\d+:)(.*)/);
+      if (match) {
+        const label = match[1];
+        const chars = match[2];
+        let row = `<span class="mc-header">${esc(label)}</span>`;
+        for (const ch of chars) {
+          const cls = MAP_CHAR_CLASSES[ch];
+          if (cls) {
+            row += `<span class="${cls}">${esc(ch)}</span>`;
+          } else {
+            row += esc(ch);
+          }
+        }
+        html += `<div class="map-row">${row}</div>`;
+      } else {
+        html += `<div class="map-row">${esc(line)}</div>`;
+      }
+    }
+    // Add metadata header
+    const mapName = data.map_name || "";
+    const player = data.player || {};
+    const meta = mapName ? `${esc(mapName)} (${player.x ?? "?"},${player.y ?? "?"})` : "";
+    if (meta) {
+      html = `<div style="margin-bottom:4px;color:var(--green);font-weight:600;font-size:10px">${meta}</div>${html}`;
+    }
+    body.innerHTML = html;
+  }
+
+  function renderScreenText(body, data) {
+    const textLines = data.text_lines || [];
+    const key = data.key;
+
+    let html = "";
+    if (key) {
+      html += `<div class="screen-text-key">Pressed: <span class="key-name">${esc(key)}</span></div>`;
+    }
+    if (textLines.length === 0) {
+      html += `<div class="screen-text-line empty">(no text on screen)</div>`;
+    } else {
+      for (const line of textLines) {
+        const hasText = line.trim().length > 0;
+        html += `<div class="screen-text-line ${hasText ? "has-text" : "empty"}">${esc(line || "\u00A0")}</div>`;
+      }
+    }
+    body.innerHTML = html;
   }
 
   // ── Agent action buttons ────────────────────────

@@ -96,22 +96,8 @@
     </div>
   </div>
 
-  <!-- LLM Log -->
-  <div class="panel panel-llm">
-    <div class="panel-header">
-      <span class="indicator"></span>
-      Agent Log
-    </div>
-    <div class="panel-body">
-      <div id="llm-messages" class="llm-messages">
-        <div class="llm-msg role-system"><span class="msg-role">sys</span>Dashboard connected. Waiting for agent events&hellip;</div>
-      </div>
-    </div>
-    <div class="prompt-bar">
-      <input type="text" class="prompt-input" id="prompt-input" placeholder="Inject prompt to agent&hellip;">
-      <button class="prompt-send" id="prompt-send">Send</button>
-    </div>
-  </div>
+  <!-- Plugin Panels (dynamically populated) -->
+  <div class="plugin-panels" id="plugin-panels"></div>
 
   <!-- Game State -->
   <div class="panel panel-state">
@@ -126,6 +112,23 @@
         </div>
       </div>
       <div id="game-status" class="state-section"></div>
+    </div>
+  </div>
+
+  <!-- LLM Log -->
+  <div class="panel panel-llm">
+    <div class="panel-header">
+      <span class="indicator"></span>
+      Agent Log
+    </div>
+    <div class="panel-body">
+      <div id="llm-messages" class="llm-messages">
+        <div class="llm-msg role-system"><span class="msg-role">sys</span>Dashboard connected. Waiting for agent events&hellip;</div>
+      </div>
+    </div>
+    <div class="prompt-bar">
+      <input type="text" class="prompt-input" id="prompt-input" placeholder="Inject prompt to agent&hellip;">
+      <button class="prompt-send" id="prompt-send">Send</button>
     </div>
   </div>
 

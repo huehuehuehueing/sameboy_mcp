@@ -141,6 +141,7 @@ class LLMToolAgent:
         self.cost_tracker = cost_tracker or CostTracker()
         self._event_sink = event_sink
         self._tools: list[dict] = [REPORT_RESULT_TOOL]  # Set via set_tools()
+        self._panel_tools: dict[str, str] = {}  # tool_name -> panel_id
 
         # History summarization
         self._max_history = config.max_history
@@ -216,6 +217,48 @@ class LLMToolAgent:
         tool_names = [t["function"]["name"] for t in openai_tools]
         self._log(f"tools set: {', '.join(tool_names)}")
 
+    def set_panel_tools(self, mapping: dict[str, str]) -> None:
+        """Set which tools emit to which dashboard panels.
+
+        Args:
+            mapping: Dict of tool_name -> panel_id
+        """
+        self._panel_tools = mapping
+
+    @staticmethod
+    def _compact_summary(name: str, result: Any) -> str:
+        """Return a compact human-readable summary of a tool result."""
+        if not isinstance(result, dict):
+            return str(result)[:120]
+
+        if name == "render_ascii_map":
+            mn = result.get("map_name", "?")
+            dims = result.get("dimensions", {})
+            w = dims.get("width_steps", "?")
+            h = dims.get("height_steps", "?")
+            p = result.get("player", {})
+            px = p.get("x", "?")
+            py = p.get("y", "?")
+            nw = len(result.get("warps", []))
+            ns = len(result.get("sprites", []))
+            return f"{mn} ({w}x{h}) player=({px},{py}) warps={nw} sprites={ns}"
+
+        if name in ("decode_screen_text", "press_and_read", "wait_and_read"):
+            lines = result.get("text_lines", [])
+            key = result.get("key")
+            preview = " | ".join(lines[:3]) if lines else "(blank)"
+            if len(preview) > 100:
+                preview = preview[:100] + "..."
+            prefix = f"[{key}] " if key else ""
+            return f"{prefix}{preview}"
+
+        if name == "read_memory":
+            addr = result.get("address", "?")
+            val = result.get("hex", result.get("value", "?"))
+            return f"[{addr}] = {val}"
+
+        return str(result)[:120]
+
     async def _execute_tool(self, name: str, args: dict) -> Any:
         """Execute an MCP tool and return the result."""
         if name == "report_result":
@@ -226,12 +269,19 @@ class LLMToolAgent:
 
         self._log(f"executing tool: {name}({args})")
         result = await self._call_tool(name, args)
-        self._log(f"  result: {str(result)[:200]}")
 
-        # Emit tool call to dashboard
+        summary = self._compact_summary(name, result)
+        self._log(f"  result: {summary}")
+
+        # Emit to dashboard
         if self._event_sink:
-            result_preview = str(result)[:200] if result else None
-            self._event_sink.emit_tool_call(name, args, result_preview)
+            # Send full result to dedicated panel if this tool has one
+            panel_id = self._panel_tools.get(name)
+            if panel_id and isinstance(result, dict):
+                self._event_sink.emit_panel_data(panel_id, result, panel_id)
+
+            # Always send compact summary to agent log
+            self._event_sink.emit_tool_call(name, args, summary)
 
         return result
 

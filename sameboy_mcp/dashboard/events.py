@@ -84,6 +84,8 @@ class AgentEventSink(Protocol):
     def get_pending_injections(self) -> list[str]: ...
     def emit_action_registry(self, actions: list[dict]) -> None: ...
     def get_pending_actions(self) -> list[dict]: ...
+    def emit_panel_data(self, panel_id: str, content: Any, panel_type: str = "") -> None: ...
+    def emit_panel_registry(self, panels: list[dict]) -> None: ...
 
 
 class DashboardEventSink:
@@ -161,6 +163,18 @@ class DashboardEventSink:
         """Called from the dashboard WS receiver to queue an agent action."""
         with self._action_lock:
             self._action_queue.append(action)
+
+    def emit_panel_data(self, panel_id: str, content: Any, panel_type: str = "") -> None:
+        self._publish(Event(
+            type=EventType.PANEL_DATA,
+            data={"panel_id": panel_id, "content": content, "type": panel_type},
+        ))
+
+    def emit_panel_registry(self, panels: list[dict]) -> None:
+        self._publish(Event(
+            type=EventType.PANEL_REGISTRY,
+            data={"panels": panels},
+        ))
 
 
 class RemoteDashboardEventSink:
@@ -281,6 +295,20 @@ class RemoteDashboardEventSink:
             "type": "agent_event",
             "event_type": "agent_actions",
             "data": {"actions": actions},
+        })
+
+    def emit_panel_data(self, panel_id: str, content: Any, panel_type: str = "") -> None:
+        self._schedule_send({
+            "type": "agent_event",
+            "event_type": "panel_data",
+            "data": {"panel_id": panel_id, "content": content, "type": panel_type},
+        })
+
+    def emit_panel_registry(self, panels: list[dict]) -> None:
+        self._schedule_send({
+            "type": "agent_event",
+            "event_type": "panel_registry",
+            "data": {"panels": panels},
         })
 
     def get_pending_actions(self) -> list[dict]:

@@ -225,6 +225,12 @@ class PokemonAgent:
 
         openai_tools = mcp_tools_to_openai(tools_result.tools)
         self._llm_agent.set_tools(openai_tools)
+        self._llm_agent.set_panel_tools({
+            "render_ascii_map": "ascii_map",
+            "decode_screen_text": "screen_text",
+            "press_and_read": "screen_text",
+            "wait_and_read": "screen_text",
+        })
         print(f"  MCP tools: {len(tools_result.tools)} discovered → {len(openai_tools)} exposed to LLM")
 
         # Load saved state if provided

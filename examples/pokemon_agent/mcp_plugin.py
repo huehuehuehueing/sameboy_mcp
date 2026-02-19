@@ -327,6 +327,13 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
 
         dashboard.register_snapshot_hook(pokemon_snapshot_hook)
 
+        dashboard.register_panels([
+            {"id": "ascii_map",   "title": "ASCII Map",   "type": "ascii_map",
+             "tools": ["render_ascii_map"]},
+            {"id": "screen_text", "title": "Screen Text", "type": "screen_text",
+             "tools": ["decode_screen_text", "press_and_read", "wait_and_read"]},
+        ])
+
     # ----------------------------------------------------------
     # decode_screen_text
     # ----------------------------------------------------------

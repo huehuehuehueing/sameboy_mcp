@@ -164,7 +164,7 @@ body {
 .dashboard {
   display: grid;
   grid-template-columns: 340px 1fr 280px;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: 1fr 1fr 240px;
   gap: var(--gap);
   padding: var(--gap);
   height: calc(100vh - 32px);
@@ -500,8 +500,9 @@ body {
 /* ── LLM Log Panel ──────────────────────────────── */
 
 .panel-llm {
-  grid-row: 2 / 3;
-  grid-column: 2 / 3;
+  grid-row: 3 / 4;
+  grid-column: 1 / -1;
+  max-height: 240px;
 }
 
 .panel-llm .panel-body {
@@ -593,7 +594,7 @@ body {
 
 .panel-state {
   grid-row: 2 / 3;
-  grid-column: 3 / 3;
+  grid-column: 3 / 4;
 }
 
 .state-grid {
@@ -617,13 +618,93 @@ body {
   color: var(--green-bright);
 }
 
-/* ── ASCII Map (plugin panel placeholder) ───────── */
+/* ── Plugin Panels Container ────────────────────── */
 
-.panel-map .panel-body {
-  font-size: 9px;
-  line-height: 1.2;
+.plugin-panels {
+  grid-row: 2 / 3;
+  grid-column: 2 / 3;
+  display: flex;
+  gap: var(--gap);
+  min-width: 0;
+  min-height: 0;
+}
+
+.plugin-panels .panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-panels:empty {
+  display: none;
+}
+
+/* ── ASCII Map Panel ───────────────────────────── */
+
+.panel-ascii-map .panel-body {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.1;
   white-space: pre;
-  letter-spacing: 1px;
+  letter-spacing: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.panel-ascii-map .map-row {
+  white-space: pre;
+}
+
+/* ASCII map cell colors */
+.mc-player  { color: var(--green-bright); font-weight: 700; }
+.mc-warp    { color: var(--cyan); }
+.mc-trainer { color: var(--red); font-weight: 600; }
+.mc-item    { color: var(--amber); font-weight: 600; }
+.mc-npc     { color: var(--blue); }
+.mc-grass   { color: var(--green-dim); }
+.mc-pc      { color: var(--purple); }
+.mc-book    { color: var(--orange); }
+.mc-sign    { color: var(--amber); }
+.mc-wall    { color: var(--border-bright); }
+.mc-walk    { color: var(--border); }
+.mc-header  { color: var(--text-dim); }
+
+/* ── Screen Text Panel ─────────────────────────── */
+
+.panel-screen-text .panel-body {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 6px;
+}
+
+.screen-text-key {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.screen-text-key .key-name {
+  color: var(--green);
+}
+
+.screen-text-line {
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.screen-text-line.has-text {
+  background: rgba(63, 185, 80, 0.06);
+  color: var(--text-bright);
+}
+
+.screen-text-line.empty {
+  color: var(--border-bright);
+  font-style: italic;
 }
 
 /* ── Responsive: narrow screens ─────────────────── */
@@ -631,15 +712,24 @@ body {
 @media (max-width: 1100px) {
   .dashboard {
     grid-template-columns: 320px 1fr;
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto auto 200px;
   }
   .panel-disasm {
     grid-column: 2;
     grid-row: 1;
   }
+  .plugin-panels {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
   .panel-state {
     grid-column: 1 / -1;
     grid-row: 3;
+  }
+  .panel-llm {
+    grid-row: 4;
+    grid-column: 1 / -1;
+    max-height: 200px;
   }
 }
 
@@ -649,8 +739,15 @@ body {
     grid-template-rows: auto;
   }
   .panel-video, .panel-controls, .panel-registers,
-  .panel-disasm, .panel-llm, .panel-state {
+  .panel-disasm, .panel-llm, .panel-state,
+  .plugin-panels {
     grid-column: 1;
     grid-row: auto;
+  }
+  .plugin-panels {
+    flex-direction: column;
+  }
+  .panel-llm {
+    max-height: 300px;
   }
 }
