@@ -28,9 +28,22 @@ BATTLE_TOOLS = {
     "read_memory", "press_and_read", "decode_screen_text", "report_result",
 }
 STRATEGY_TOOLS = {
+    # Navigation & screen
     "press_and_read", "wait_and_read", "render_ascii_map", "decode_screen_text",
+    "get_area_info", "capture_screen", "save_screenshot",
+    # Memory & inventory
     "read_memory", "write_memory", "read_inventory", "set_inventory",
-    "read_money", "set_money", "report_result",
+    "read_money", "set_money",
+    # Save states
+    "save_state", "load_state", "list_states", "delete_state",
+    "export_state", "import_state",
+    # Cheats
+    "add_cheat", "remove_cheat", "remove_all_cheats", "list_cheats",
+    "set_cheats_enabled", "import_cheat",
+    # Emulator control
+    "get_status", "save_battery", "load_battery",
+    # Required
+    "report_result",
 }
 DIALOG_TOOLS = {
     "press_and_read", "wait_and_read", "decode_screen_text", "report_result",
