@@ -374,26 +374,21 @@ class PokemonAgent:
             await self._routines.use_pokecenter()
 
         elif action == "interact":
-            if current_pos not in self._interacted_objects:
-                self._log_action(f"[{self._step_count}] {state.map_name} {pos} → interact")
-                self._interacted_objects.add(current_pos)
-                await self._routines.interact()
+            # The LLM already performed the interaction via press_and_read
+            # inside run_with_tools — just log and track, no extra A press.
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → interact")
+            self._interacted_objects.add(current_pos)
 
-                if self._area_analyzer:
-                    items_here = self._area_analyzer.get_items_at(
-                        state.map_id, state.player_x, state.player_y
-                    )
-                    for item in items_here:
-                        if not item.collected:
-                            self._log_action(f"  collected {item.item_name or 'item'}")
-                            self._area_analyzer.mark_item_collected(
-                                state.map_id, item.x, item.y
-                            )
-            else:
-                self._log_action(f"[{self._step_count}] {state.map_name} {pos} → already interacted, moving on")
-                walkable = await self._routines.get_walkable_directions()
-                if walkable:
-                    await self._routines.walk(walkable[0], 1)
+            if self._area_analyzer:
+                items_here = self._area_analyzer.get_items_at(
+                    state.map_id, state.player_x, state.player_y
+                )
+                for item in items_here:
+                    if not item.collected:
+                        self._log_action(f"  collected {item.item_name or 'item'}")
+                        self._area_analyzer.mark_item_collected(
+                            state.map_id, item.x, item.y
+                        )
 
         elif action == "collect_item":
             if self._area_analyzer:
