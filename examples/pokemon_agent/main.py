@@ -667,7 +667,7 @@ Use read_memory to check HP and stats, then call report_result with your battle 
 
             case GameMode.OVERWORLD:
                 # If game is ignoring input (post-intro cutscene)
-                if state.ignore_input > 10:
+                if state.ignore_input > 10 and not self._active_instruction:
                     screen_preview = ""
                     if state.screen_text and state.screen_text.has_text:
                         text_lines = [l for l in state.screen_text.lines if l.strip()]
@@ -701,15 +701,13 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                         )
                         await self._log_intro_debug(state)
                     else:
-                        # Normal ignore_input (dialog transition) — press A
+                        # No visible dialog prompt — wait for counter to tick down.
+                        # Pressing A without a ▼ prompt risks triggering hidden events
+                        # that reset ignore_input → infinite loop.
                         self._log_action(
-                            f"[{self._step_count}] {state.map_name} — input blocked "
-                            f"(counter={state.ignore_input}), pressing A"
-                            f"  [screen: {screen_preview}]"
+                            f"[{self._step_count}] {state.map_name} — ignore_input="
+                            f"{state.ignore_input}, waiting  [screen: {screen_preview}]"
                         )
-                        for _ in range(3):
-                            await self._routines.press("a", 6)
-                            await self._routines.wait_frames(15)
 
                     await self._routines.wait_frames(self.config.cycle_frames)
                     return True
@@ -787,7 +785,7 @@ Use tools to analyze the situation, then call report_result with your action."""
                     self._active_instruction = None
                     self._autopilot = False
 
-            case GameMode.DIALOG | GameMode.MENU if state.party_count == 0 and state.badge_count == 0:
+            case GameMode.DIALOG | GameMode.MENU if state.party_count == 0 and state.badge_count == 0 and not state.game_timer_counting:
                 # Intro phase (before getting starter Pokemon) — use coded
                 # routines instead of LLM to advance Oak's dialog, handle
                 # preset name lists, etc.  Deterministic and free.
