@@ -1,8 +1,0 @@
-Analyze this Pokemon Yellow screenshot for navigation.
-
-Identify visible obstacles and exits. Output JSON only:
-{
-  "exits_visible": ["stairs to upper-right", "door at bottom"],
-  "obstacles": ["table blocking path", "NPC near door"],
-  "recommended_direction": "right"
-}

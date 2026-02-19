@@ -1,8 +1,0 @@
-Analyze this Pokemon Yellow Game Boy screenshot.
-Describe what you see:
-1. What screen/menu is shown? (overworld, battle, dialog, menu, title)
-2. Any text visible? What does it say?
-3. If overworld: describe the location, any NPCs or obstacles
-4. If battle: which Pokemon are fighting, any HP bars visible
-5. If menu: what options are shown, which is selected
-Be concise and factual.

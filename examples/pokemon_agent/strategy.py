@@ -31,11 +31,14 @@ from . import memory_map as mem
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-BATTLE_SYSTEM_PROMPT = (_PROMPTS_DIR / "battle_strategy.txt").read_text()
-STRATEGY_SYSTEM_PROMPT = (_PROMPTS_DIR / "overworld_strategy.txt").read_text()
-VISION_PROMPT = (_PROMPTS_DIR / "vision.txt").read_text()
-PATHFINDING_SYSTEM_PROMPT = (_PROMPTS_DIR / "pathfinding_system.txt").read_text()
-PATHFINDING_VISION_PROMPT = (_PROMPTS_DIR / "pathfinding_vision.txt").read_text()
+# Legacy prompt constants — the prompt files were deleted because the active
+# code path uses llm_agent.py with tool-calling prompts instead.  These stubs
+# exist only to keep StrategyEngine methods (also unused) importable.
+BATTLE_SYSTEM_PROMPT = ""
+STRATEGY_SYSTEM_PROMPT = ""
+VISION_PROMPT = ""
+PATHFINDING_SYSTEM_PROMPT = ""
+PATHFINDING_VISION_PROMPT = ""
 
 
 class StrategyEngine:
