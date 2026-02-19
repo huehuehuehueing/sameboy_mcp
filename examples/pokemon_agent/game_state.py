@@ -709,10 +709,9 @@ class GameStateReader:
             if "NICKNAME" in text:
                 return GameMode.NAME_ENTRY
 
-        # Name entry via memory flag
-        if naming_screen != 0:
-            print("Debug: naming_screen flag set, detecting NAME_ENTRY mode")
-            return GameMode.NAME_ENTRY
+        # NOTE: naming_screen (0xCF91) is NOT reliable — the game reuses
+        # this address for other purposes (e.g. PC menus) and doesn't always
+        # clear it.  The keyboard grid check above is the definitive test.
 
         # Universal title/main menu detection for map_id=0
         # These strings only appear on title/main menu screens, so they're
