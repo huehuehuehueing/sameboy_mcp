@@ -63,7 +63,8 @@ REPORT_RESULT_TOOL = {
         "name": "report_result",
         "description": (
             "REQUIRED — call this to report your decision. "
-            "You MUST call this before your turns run out."
+            "You MUST call this before your turns run out. "
+            "For navigate_route: MUST include dest_map_name (e.g. 'Viridian City')."
         ),
         "parameters": {
             "type": "object",
@@ -86,7 +87,7 @@ REPORT_RESULT_TOOL = {
                 "y": {"type": "integer", "description": "Target y coordinate (from ASCII map)"},
                 "interact": {"type": "boolean", "description": "Press A on arrival (default false)"},
                 "dest_map_id": {"type": "integer", "description": "Target map ID for navigate_route"},
-                "dest_map_name": {"type": "string", "description": "Target map name for navigate_route (e.g. 'Pallet Town')"},
+                "dest_map_name": {"type": "string", "description": "REQUIRED for navigate_route. Target map name, e.g. 'Viridian City', 'Pallet Town', 'Route 1'"},
                 "reasoning": {"type": "string", "description": "Brief explanation"},
             },
             "required": ["action"],

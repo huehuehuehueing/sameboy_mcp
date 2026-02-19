@@ -443,6 +443,9 @@ class PokemonAgent:
         pos = f"({state.player_x},{state.player_y})"
         current_pos = (state.map_id, state.player_x, state.player_y)
 
+        if self._verbose:
+            self._log_action(f"  [debug] decision: {decision}")
+
         if action == "explore":
             direction = decision.get("direction", "up")
             steps = decision.get("steps", 1)
@@ -530,16 +533,37 @@ class PokemonAgent:
                 self._log_action(f"  no pokecenter warp on this map")
 
         elif action == "navigate_route":
+            from .pokemon_data import MAP_NAME_TO_ID, MAP_NAMES
             dest_map_id = decision.get("dest_map_id")
             dest_map_name = decision.get("dest_map_name")
+
+            # Resolve name → id
             if dest_map_id is None and dest_map_name:
-                from .pokemon_data import MAP_NAME_TO_ID
                 dest_map_id = MAP_NAME_TO_ID.get(dest_map_name)
                 if dest_map_id is None:
-                    # Try case-insensitive lookup
                     dest_map_id = MAP_NAME_TO_ID.get(dest_map_name.upper())
+
+            # Fallback: extract destination from reasoning or active instruction
+            if dest_map_id is None:
+                fallback_texts = []
+                if decision.get("reasoning"):
+                    fallback_texts.append(decision["reasoning"])
+                if self._active_instruction:
+                    fallback_texts.append(self._active_instruction)
+                for text in fallback_texts:
+                    text_upper = text.upper()
+                    # Try each known map name (longest first to avoid partial matches)
+                    sorted_names = sorted(MAP_NAME_TO_ID.keys(), key=len, reverse=True)
+                    for name in sorted_names:
+                        if name in text_upper:
+                            dest_map_id = MAP_NAME_TO_ID[name]
+                            dest_map_name = name
+                            self._log_action(f"  navigate_route: extracted dest '{name}' from fallback text")
+                            break
+                    if dest_map_id is not None:
+                        break
+
             if dest_map_id is not None:
-                from .pokemon_data import MAP_NAMES
                 dest_name = MAP_NAMES.get(dest_map_id, f"map_{dest_map_id}")
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} {pos} → navigate_route to {dest_name} (map {dest_map_id})"
@@ -552,7 +576,8 @@ class PokemonAgent:
             else:
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} {pos} → navigate_route: "
-                    f"unknown dest '{dest_map_name or dest_map_id}'"
+                    f"no dest found (dest_map_id={dest_map_id}, dest_map_name={dest_map_name}, "
+                    f"decision keys={list(decision.keys())})"
                 )
 
         elif action == "collect_hidden":
