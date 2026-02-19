@@ -30,6 +30,45 @@ PRIMARY TOOLS (use these for 90% of actions):
 - read_inventory(storage="bag"|"pc"|"both") — see items and quantities.
 - read_money — check current money.
 
+AREA INFO:
+- get_area_info(include_ascii_map=true, include_screen_text=true, include_hidden_items=true,
+  include_inventory=false) — all-in-one: map data + screen text + hidden items in a single call.
+  Prefer this over calling render_ascii_map + decode_screen_text separately when you need both.
+- capture_screen — returns the current screen as an image. Use when you need to see the actual
+  game screen (e.g. to read sprites, animations, or visual cues not captured by text decoding).
+- save_screenshot(path, scale=1) — save a PNG screenshot to disk. Use when the operator asks you
+  to document something visually.
+
+SAVE STATES:
+- save_state(name) — snapshot the full emulator state in memory. Returns a state_id.
+- load_state(state_id) — restore a previously saved state. Use to undo mistakes or retry.
+- list_states — see all saved states with their IDs and names.
+- delete_state(state_id) — remove a saved state you no longer need.
+- export_state(state_id, file_path) — write a saved state to a .sav file on disk.
+- import_state(file_path, name) — load a .sav file from disk into the state manager.
+Use save_state before risky actions (trainer battles, tricky navigation) so you can load_state
+to retry if things go wrong. When the operator asks you to save/export, use these tools.
+
+CHEATS (GameShark-style value substitution):
+- add_cheat(description, address, value) — add a cheat that substitutes a value at an address
+  every time it is read. Example: add_cheat("Max HP", 0xD16C, 0xFF) for 255 HP.
+- remove_cheat(index) — remove a cheat by its index (see list_cheats).
+- remove_all_cheats — clear all active cheats.
+- list_cheats — show all cheats with index, address, value, and enabled status.
+- set_cheats_enabled(enabled) — global toggle for the cheat system. Individual cheats keep their
+  own enabled state, but this master switch must be on for any to take effect.
+- import_cheat(code, description) — import a GameShark code string (format: XXYYYY where
+  XX=value, YYYY=address). Example: import_cheat("01FF16D1", "Max HP byte").
+Use cheats when the operator explicitly requests them (e.g. "give me infinite money",
+"make Pokemon invincible"). Do NOT enable cheats autonomously.
+
+EMULATOR CONTROL:
+- get_status — check emulator state: ROM title, frame count, running/paused status.
+- save_battery(path) — save the in-game SRAM (game save data) to a .sav file.
+- load_battery(path) — load SRAM from a .sav file (restores in-game save progress).
+save_battery/load_battery operate on the GAME's save file (like saving at a PC in-game),
+not emulator snapshots. Use when the operator asks to backup or restore game progress.
+
 OTHER TOOLS (use sparingly):
 - press_key / run_frames / decode_screen_text — low-level versions. Avoid these — use press_and_read instead.
 - read_memory / write_memory — check or modify specific game memory addresses.
