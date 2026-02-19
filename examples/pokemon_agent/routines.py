@@ -117,6 +117,25 @@ class Routines:
         """Capture current screen as base64 PNG."""
         return await self._call("capture_screen", {"format": "png"})
 
+    async def ensure_overworld(self, max_attempts: int = 20) -> bool:
+        """Clear any active dialog/menu so the game returns to OVERWORLD mode.
+
+        Presses B repeatedly (to dismiss dialogs and close menus), then
+        verifies mode via read_state.  Returns True if OVERWORLD is reached.
+        """
+        for attempt in range(max_attempts):
+            state = await self.read_state()
+            if state.mode == GameMode.OVERWORLD:
+                if attempt > 0:
+                    print(f"  [ensure_overworld] cleared dialog after {attempt} presses")
+                return True
+            # Press B to dismiss dialog / close menu, then wait for animation
+            await self.press("b", 6)
+            await self.wait_frames(12)
+        state = await self.read_state()
+        print(f"  [ensure_overworld] FAILED after {max_attempts} attempts, mode={state.mode}")
+        return state.mode == GameMode.OVERWORLD
+
     # ============================================================
     # Title Screen and Intro
     # ============================================================
@@ -1460,6 +1479,13 @@ class Routines:
             True if dest_map_id was reached.
         """
         print(f"  [nav-route] navigate_route() ENTERED: dest_map_id={dest_map_id}")
+
+        # Clear any active dialog/menu before navigating
+        in_overworld = await self.ensure_overworld()
+        if not in_overworld:
+            print(f"  [nav-route] could not clear dialog, aborting")
+            return False
+
         state = await self.read_state()
         current_map = state.map_id
         print(f"  [nav-route] current_map={current_map} ({MAP_NAMES.get(current_map, '?')})")
