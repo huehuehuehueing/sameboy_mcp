@@ -285,6 +285,7 @@ class GameState:
     # Input control
     ignore_input: int = 0   # Frames remaining where game ignores joypad
     joypad_sim: int = 0     # Non-zero when game is simulating joypad (scripted sequences)
+    joypad_disabled: bool = False  # BIT_DISABLE_JOYPAD (bit 5 of wStatusFlags5 @ 0xD72F) — definitive input block
     names_set: bool = False  # True when both player and rival names arent debug defaults
     pc: int = 0             # CPU program counter (for debug logging)
     game_timer_counting: bool = False  # BIT_GAME_TIMER_COUNTING: set once by SpecialEnterMap after OakSpeech
@@ -686,6 +687,7 @@ class GameStateReader:
         joypad_sim: int = 0,
         names_set: bool = False,
         pc: int = 0,
+        joypad_disabled: bool = False,
     ) -> GameMode:
         """Detect current game mode from memory values."""
         # Lost battle
@@ -767,11 +769,19 @@ class GameStateReader:
                 return GameMode.INTRO
             return GameMode.DIALOG
 
-        # Text/dialog detection using actual screen tile analysis
-        # This is more reliable than memory flags for standard dialog boxes
+        # ── Deterministic dialog detection ──────────────────────
+        # Primary: wStatusFlags5 bit 5 (BIT_DISABLE_JOYPAD) at 0xD72F.
+        # This is checked by engine/joypad.asm — when set, ALL button
+        # presses are discarded by DiscardButtonPresses.  It is the
+        # game's own "input blocked" flag and is the authoritative
+        # indicator of dialog/text state.
+        if joypad_disabled:
+            return GameMode.DIALOG
+
+        # Secondary: screen tile analysis as fallback for menus that
+        # don't set BIT_DISABLE_JOYPAD (e.g. START menu, item menus).
         from .pathfinding import is_text_box_visible, has_text_content
 
-        # Check screen tiles for actual text box borders
         has_visible_textbox = False
         has_text_chars = False
         if screen_text and screen_text.raw_tiles:
@@ -781,13 +791,8 @@ class GameStateReader:
             has_visible_textbox = is_text_box_visible(flat_tiles)
             has_text_chars = has_text_content(flat_tiles)
 
-        # Dialog is active if we see text box borders AND text content
         if has_visible_textbox and has_text_chars:
-            return GameMode.DIALOG
-
-        # Also check text_box_id as secondary indicator
-        if text_box_id != 0 and text_box_id != 0xFF and has_text_chars:
-            return GameMode.DIALOG
+            return GameMode.MENU
 
         # Overworld (default for gameplay)
         return GameMode.OVERWORLD
@@ -827,6 +832,12 @@ class GameStateReader:
         # Read the ACTUAL joypad simulation index from disassembly
         # When non-zero, game is controlling player (cutscenes, intros)
         joypad_sim = await self._read_byte(mem.WRAM_SIM_JOYPAD_STATES_INDEX)
+
+        # Read wStatusFlags5 — bit 5 (BIT_DISABLE_JOYPAD) is the definitive
+        # input-blocked flag.  Checked in engine/joypad.asm; when set, ALL
+        # button presses are discarded by DiscardButtonPresses.
+        status_flags5 = await self._read_byte(mem.WRAM_STATUS_FLAGS5)
+        joypad_disabled = bool(status_flags5 & 0x20)  # bit 5
 
         # Read wStatusFlags6 — bit 0 (BIT_GAME_TIMER_COUNTING) is set once
         # by SpecialEnterMap after OakSpeech returns.  Never cleared.
@@ -885,6 +896,7 @@ class GameStateReader:
             script_running=script_running,
             joypad_sim=joypad_sim,
             names_set=names_set,
+            joypad_disabled=joypad_disabled,
         )
 
         # Read party Pokemon
@@ -977,6 +989,7 @@ class GameStateReader:
             letters_entered=letters_entered,
             ignore_input=ignore_input,
             joypad_sim=joypad_sim,
+            joypad_disabled=joypad_disabled,
             names_set=names_set,
             pc=pc,
             game_timer_counting=game_timer_counting,

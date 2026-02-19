@@ -118,23 +118,26 @@ class Routines:
         return await self._call("capture_screen", {"format": "png"})
 
     async def ensure_overworld(self, max_attempts: int = 20) -> bool:
-        """Clear any active dialog/menu so the game returns to OVERWORLD mode.
+        """Clear any active dialog/menu so the player can move.
 
-        Presses B repeatedly (to dismiss dialogs and close menus), then
-        verifies mode via read_state.  Returns True if OVERWORLD is reached.
+        Uses the deterministic BIT_DISABLE_JOYPAD flag (wStatusFlags5 bit 5
+        at 0xD72F) — the same flag the game's joypad handler checks.
+        Presses B repeatedly to dismiss dialogs and close menus.
+        Returns True when joypad input is enabled.
         """
         for attempt in range(max_attempts):
             state = await self.read_state()
-            if state.mode == GameMode.OVERWORLD:
+            if not state.joypad_disabled and state.mode in (GameMode.OVERWORLD, GameMode.MENU):
                 if attempt > 0:
-                    print(f"  [ensure_overworld] cleared dialog after {attempt} presses")
+                    print(f"  [ensure_overworld] input enabled after {attempt} B presses")
                 return True
             # Press B to dismiss dialog / close menu, then wait for animation
             await self.press("b", 6)
             await self.wait_frames(12)
         state = await self.read_state()
-        print(f"  [ensure_overworld] FAILED after {max_attempts} attempts, mode={state.mode}")
-        return state.mode == GameMode.OVERWORLD
+        print(f"  [ensure_overworld] FAILED after {max_attempts} attempts, "
+              f"mode={state.mode}, joypad_disabled={state.joypad_disabled}")
+        return not state.joypad_disabled
 
     # ============================================================
     # Title Screen and Intro
@@ -442,14 +445,14 @@ class Routines:
         for step in range(steps):
             before = await self.read_state()
 
-            # If in dialog mode, we can't walk - need to exit first
-            if before.mode == GameMode.DIALOG:
-                self._log(f"in dialog mode, pressing B first")
+            # If joypad is disabled (dialog/text active), try to clear it
+            if before.joypad_disabled:
+                self._log(f"joypad disabled (BIT_DISABLE_JOYPAD set), pressing B")
                 await self.press("b", 6)
                 await self.wait_frames(8)
                 before = await self.read_state()
-                if before.mode == GameMode.DIALOG:
-                    self._log(f"still in dialog, cannot walk")
+                if before.joypad_disabled:
+                    self._log(f"joypad still disabled, cannot walk")
                     return False
 
             # Press direction and wait for walk animation

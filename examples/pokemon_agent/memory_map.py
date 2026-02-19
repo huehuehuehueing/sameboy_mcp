@@ -417,6 +417,7 @@ DIR_RIGHT = 0x0C
 
 WRAM_GAME_PROGRESS_FLAGS = 0xD356   # Event flags (1 byte)
 WRAM_OAK_SPEECH_STATUS = 0xD72D     # Oak intro progress flags
+WRAM_STATUS_FLAGS5 = 0xD72F         # wStatusFlags5: bit 5 = BIT_DISABLE_JOYPAD (definitive input block flag)
 WRAM_OBTAINED_STARTER = 0xD74B      # Bit 7 = obtained starter Pokemon
 WRAM_STATUS_FLAGS6 = 0xD731         # wStatusFlags6: bit 0 = BIT_GAME_TIMER_COUNTING (set by SpecialEnterMap after OakSpeech)
 WRAM_NAMING_SCREEN_TYPE = 0xCF91    # Name entry screen type (0=unused)
