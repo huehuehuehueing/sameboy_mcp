@@ -101,11 +101,16 @@ class PokemonAgent:
             raise RuntimeError("Not connected")
         result = await self._session.call_tool(name, args)
         if result.content:
-            text = result.content[0].text
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                return text
+            # Find the first TextContent item (skip ImageContent, etc.)
+            for item in result.content:
+                if hasattr(item, "text"):
+                    try:
+                        return json.loads(item.text)
+                    except json.JSONDecodeError:
+                        return item.text
+            # No text content — return metadata about non-text items
+            item = result.content[0]
+            return {"type": type(item).__name__}
         return None
 
     async def connect(self):
