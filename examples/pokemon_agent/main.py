@@ -84,13 +84,10 @@ class PokemonAgent:
 
         # Navigation state
         self._interacted_objects: set[tuple[int, int, int]] = set()  # (map_id, x, y)
-        self._dialog_counter = 0  # Counts consecutive dialog steps
         self._last_position: tuple[int, int, int] = (0, 0, 0)  # (map_id, x, y)
         self._stuck_counter = 0  # Counts steps without movement
-        self._last_screen_text = ""  # For detecting changing dialogue
         self._movement_history: list[tuple[int, int, int, str]] = []  # (map_id, x, y, direction) for backtracking
         self._max_history = 50  # Keep last N movements
-        self._initial_spawn_handled = False  # Track if initial spawn sequence was handled
 
     def _log_action(self, msg: str):
         """Print a compact action line to console and emit to dashboard."""
@@ -220,8 +217,6 @@ class PokemonAgent:
                 state_id = result["state_id"]
                 await self.call_tool("load_state", {"state_id": state_id})
                 print(f"  State loaded (ID: {state_id})")
-                # Mark initial spawn as handled since we're loading a state
-                self._initial_spawn_handled = True
             else:
                 print(f"  Warning: Failed to load state: {result}")
 
@@ -403,127 +398,6 @@ class PokemonAgent:
 
         # Act based on game mode
         match state.mode:
-            case GameMode.TITLE_SCREEN | GameMode.INTRO | GameMode.MAIN_MENU:
-                # Mode detection triggers these incorrectly during gameplay.
-                # TODO: fix _detect_mode to not misidentify these.
-                if self.config.verbose:
-                    self._log_action(f"[{self._step_count}] Spurious {state.mode.name} — A+B")
-                await self._routines.press("a", 6)
-                await self._routines.wait_frames(8)
-                await self._routines.press_b_cancel()
-
-            case GameMode.NAME_ENTRY:
-                # Determine if naming player or rival from screen text
-                name_type = "player"  # Default
-                if state.screen_text and state.screen_text.has_text:
-                    text = state.screen_text.full_text.upper()
-                    if "RIVAL" in text or "HIS NAME" in text:
-                        name_type = "rival"
-                    elif "NICKNAME" in text:
-                        name_type = "pokemon"
-
-                self._log_action(f"[{self._step_count}] Name entry ({name_type})")
-                # Use default names
-                if name_type == "player":
-                    await self._routines.enter_name("ASH")
-                elif name_type == "rival":
-                    await self._routines.enter_name("GARY")
-                else:
-                    await self._routines.enter_name("BUDDY")
-
-            case GameMode.DIALOG:
-                self._dialog_counter += 1
-
-                # Get current screen text for comparison
-                current_text = ""
-                if state.screen_text and state.screen_text.has_text:
-                    current_text = state.screen_text.full_text
-
-                # Check if text is changing (legitimate dialogue) or stuck (repeating)
-                text_is_changing = current_text != self._last_screen_text
-                self._last_screen_text = current_text
-
-                # Check if we're stuck in a dialog loop (same position + same text)
-                current_pos = (state.map_id, state.player_x, state.player_y)
-                if current_pos == self._last_position and not text_is_changing:
-                    self._stuck_counter += 1
-                else:
-                    self._stuck_counter = 0
-                    self._last_position = current_pos
-
-                # Check if we're on a warp - try to use it (simple check)
-                if state.map_info and state.map_info.warps and self._stuck_counter > 10:
-                    for warp in state.map_info.warps:
-                        dist = abs(warp.x - state.player_x) + abs(warp.y - state.player_y)
-                        if dist == 0:  # On the warp
-                            self._log_action(f"[{self._step_count}] On warp ({warp.x},{warp.y}) — B+down")
-                            await self._routines.press("b", 6)
-                            await self._routines.wait_frames(10)
-                            await self._routines.press("down", 16)
-                            await self._routines.wait_frames(30)
-                            break
-
-                # Only consider "stuck" if text isn't changing AND we're in actual gameplay area
-                if self._stuck_counter > 15 and state.map_id > 0:
-                    # Likely stuck interacting with an object - mark it and move away
-                    self._interacted_objects.add(current_pos)
-                    self._log_action(f"[{self._step_count}] Stuck dialog ({state.player_x},{state.player_y}) — escaping")
-
-                    # Press B multiple times to exit any menu/dialog
-                    for _ in range(3):
-                        await self._routines.press_b_cancel()
-                        await self._routines.wait_frames(8)
-
-                    # Record position before movement attempt
-                    before_x, before_y = state.player_x, state.player_y
-
-                    # Try backtracking first if we have movement history
-                    moved = False
-                    if self._movement_history:
-                        # Get last movement and reverse it
-                        last_map, last_x, last_y, last_dir = self._movement_history[-1]
-                        if last_map == state.map_id:
-                            reverse_dir = {"up": "down", "down": "up", "left": "right", "right": "left"}.get(last_dir, "down")
-                            self._log_action(f"  backtrack {reverse_dir}")
-                            await self._routines.walk(reverse_dir, 1)
-
-                            after_state = await self._state_reader.read_state()
-                            if after_state.player_x != before_x or after_state.player_y != before_y:
-                                moved = True
-                                self._movement_history.pop()
-                                self._log_action(f"  → ({after_state.player_x},{after_state.player_y})")
-
-                    # If backtracking didn't work, try other directions
-                    if not moved:
-                        walkable = await self._routines.get_walkable_directions()
-                        for direction in walkable:
-                            await self._routines.walk(direction, 1)
-                            after_state = await self._state_reader.read_state()
-                            if after_state.player_x != before_x or after_state.player_y != before_y:
-                                moved = True
-                                self._movement_history.append((state.map_id, before_x, before_y, direction))
-                                if len(self._movement_history) > self._max_history:
-                                    self._movement_history.pop(0)
-                                self._log_action(f"  escaped {direction} → ({after_state.player_x},{after_state.player_y})")
-                                break
-
-                    if not moved:
-                        self._log_action(f"  truly stuck at ({before_x},{before_y}), escape routine")
-                        escaped = await self._routines.escape_stuck_state(self._movement_history)
-                        if not escaped:
-                            self._log_action(f"  escape failed")
-
-                    self._stuck_counter = 0
-                    self._dialog_counter = 0
-                else:
-                    if self.config.verbose:
-                        self._log_action(f"[{self._step_count}] Dialog — A")
-                    await self._routines.advance_text_once()
-
-            case GameMode.WHITEOUT:
-                self._log_action(f"[{self._step_count}] Whiteout — advancing text")
-                await self._routines.handle_whiteout()
-
             case GameMode.BATTLE:
                 my_name = state.battle.my_pokemon.species_name if state.battle and state.battle.my_pokemon else "???"
                 enemy_name = state.battle.enemy_pokemon.species_name if state.battle and state.battle.enemy_pokemon else "???"
@@ -574,9 +448,6 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                     await self._routines.execute_battle_move(0)
 
             case GameMode.OVERWORLD:
-                # Reset dialog counter when in overworld
-                self._dialog_counter = 0
-
                 # Track position for stuck detection
                 current_pos = (state.map_id, state.player_x, state.player_y)
                 if current_pos == self._last_position:
@@ -589,28 +460,6 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                 if self.config.verbose and state.screen_text and state.screen_text.has_text:
                     text_preview = state.screen_text.full_text[:100].replace("\n", " | ")
                     print(f"  [screen] {text_preview}")
-
-                # Handle initial spawn sequence in Player House 2F
-                # The intro script keeps ignore_input high until fully complete.
-                # Only check this while at the spawn point (3,6) and before first movement.
-                if not self._initial_spawn_handled and state.map_id == 38 and state.party_count == 0:
-                    # Check if intro script is still running
-                    import examples.pokemon_agent.memory_map as mem
-                    ignore_result = await self.call_tool("read_memory", {"address": mem.WRAM_IGNORE_INPUT_COUNTER, "length": 1})
-                    ignore_input = ignore_result.get("bytes", [0])[0] if isinstance(ignore_result, dict) else 0
-
-                    # If still at spawn point with high ignore_input, intro is still running
-                    if state.player_x == 3 and state.player_y == 6 and ignore_input > 10:
-                        if self.config.verbose or (self._step_count % 10 == 0):
-                            print(f"[{self._step_count}] Intro script running (ignore={ignore_input:#x}), pressing A...")
-                        await self._routines.press("a", 8)
-                        await self._routines.wait_frames(30)
-                        return True  # Continue to next cycle
-
-                    # Player moved from spawn or ignore_input is low - intro complete!
-                    if state.player_x != 3 or state.player_y != 6 or ignore_input <= 10:
-                        print(f"[{self._step_count}] Initial spawn complete - player can move freely")
-                        self._initial_spawn_handled = True
 
                 # All overworld decisions go through the LLM tool agent
                 # Include area context from analyzer
@@ -762,9 +611,9 @@ Use tools to analyze the situation, then call report_result with your action."""
                         await self._routines.wait_frames(30)
 
             case _:
-                # Unknown mode, press B to try to exit, then wait
-                await self._routines.press_b_cancel()
-                await self._routines.wait_frames(30)
+                # Non-battle/overworld modes (dialog, name entry, intro, etc.)
+                # are handled via dashboard actions only
+                await self._routines.wait_frames(self.config.cycle_frames)
 
         # Run some frames between decisions
         await self._routines.wait_frames(self.config.cycle_frames)
