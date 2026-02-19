@@ -675,11 +675,13 @@ Use tools to analyze the situation, then call report_result with your action."""
 
                 await self._execute_overworld_decision(decision, state)
 
-                # If running a one-shot instruction (not autopilot exploration),
-                # clear it after the LLM returns — the task is done.
-                if self._active_instruction and not self._autopilot:
+                # Instruction fulfilled — clear it so the loop stops.
+                # Autopilot was turned on just to serve the instruction,
+                # so turn it off too.
+                if self._active_instruction:
                     self._log_action(f"  instruction complete, waiting for next prompt")
                     self._active_instruction = None
+                    self._autopilot = False
 
             case GameMode.DIALOG | GameMode.MENU if self._autopilot or self._active_instruction:
                 # Short LLM call focused only on the current dialog/menu.
@@ -713,9 +715,10 @@ Call report_result as soon as the dialog closes (blank text_lines)."""
                     f"[{self._step_count}] {state.map_name} {pos} → {action}"
                 )
 
-                if self._active_instruction and not self._autopilot:
+                if self._active_instruction:
                     self._log_action(f"  instruction complete, waiting for next prompt")
                     self._active_instruction = None
+                    self._autopilot = False
 
             case _:
                 # Non-battle/overworld modes (name entry, intro, etc.)
