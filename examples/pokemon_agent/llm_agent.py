@@ -406,6 +406,9 @@ class LLMToolAgent:
             {"role": "system", "content": system_prompt},
         ] + list(self._message_history)
 
+        consecutive_blanks = 0
+        BLANK_THRESHOLD = 3
+
         for turn in range(max_turns):
             self._log(f"turn {turn + 1}/{max_turns}")
 
@@ -470,6 +473,29 @@ class LLMToolAgent:
                         "tool_call_id": tool_call.id,
                         "content": json.dumps(result) if not isinstance(result, str) else result,
                     })
+
+                    # Track consecutive blank press_and_read results
+                    if func_name in ("press_and_read", "wait_and_read"):
+                        text_lines = result.get("text_lines", []) if isinstance(result, dict) else []
+                        if not any(line.strip() for line in text_lines):
+                            consecutive_blanks += 1
+                        else:
+                            consecutive_blanks = 0
+
+                        if consecutive_blanks >= BLANK_THRESHOLD:
+                            warning = (
+                                f"WARNING: {consecutive_blanks} consecutive blank "
+                                f"screen results. Your button presses are having no "
+                                f"visible effect. STOP pressing buttons. Call "
+                                f"render_ascii_map NOW to see your position, then "
+                                f"navigate toward your target using the coordinates."
+                            )
+                            self._log(f"  *** blank screen warning ({consecutive_blanks}x)")
+                            messages.append({
+                                "role": "user",
+                                "content": warning,
+                            })
+                            consecutive_blanks = 0  # reset so warning fires again after another streak
             else:
                 # No tool calls — try to parse text content as a JSON decision
                 # (some models return the decision as text instead of calling report_result)
@@ -525,31 +551,45 @@ PRIMARY TOOLS (use these for 90% of actions):
 - press_and_read(key, frames=16, wait=60) — press button + wait + read screen text. YOUR MAIN TOOL. Returns text_lines showing what's on screen.
 - wait_and_read(wait=60) — wait without pressing, then read screen. Use when text is still printing.
 - render_ascii_map — see area layout. Legend: . walkable, # wall, @ player, W warp, G grass, N NPC, T trainer, I item, C PC, B bookshelf, ! sign.
+- read_inventory(storage="bag"|"pc"|"both") — see items and quantities.
+- read_money / set_money — read or set player's money.
+- set_inventory(storage, items="id:qty,...") — directly set items in bag or PC.
 
 OTHER TOOLS (use sparingly):
 - press_key / run_frames / decode_screen_text — low-level versions. Avoid these — use press_and_read instead.
-- read_memory — check specific game memory addresses.
+- read_memory / write_memory — check or modify specific game memory addresses.
 - report_result — REQUIRED as your FINAL call to hand control back.
 
-WORKFLOW:
-1. ORIENT FIRST: Call render_ascii_map to see where you are and what's nearby.
-2. MOVE TO TARGET: Use press_and_read(key="up/down/left/right") to walk. Check text_lines after each move.
-3. INTERACT: Face the object, then press_and_read(key="a") to interact. Read the text_lines result.
-4. REPEAT until the screen text CONFIRMS the goal.
-5. Call report_result with evidence.
+COORDINATE NAVIGATION (CRITICAL):
+The ASCII map uses (x, y) coordinates. @ marks your position.
+- Target is LEFT of you (smaller x) → press_and_read(key="left")
+- Target is RIGHT of you (larger x) → press_and_read(key="right")
+- Target is ABOVE you (smaller y) → press_and_read(key="up")
+- Target is BELOW you (larger y) → press_and_read(key="down")
+Example: You are @ at (3,5). PC marked C is at (3,2). You need to go UP 3 times (y: 5→4→3→2), then press A.
+Example: NPC marked N is at (5,5). You need to go RIGHT 2 times (x: 3→4→5), then press A.
+To interact with an object, you must be ADJACENT to it and FACING it. Press the direction toward it (to face it), then press A. You do NOT walk onto the object's tile.
 
-BLANK SCREEN = NO EFFECT:
-If press_and_read returns empty text_lines, the button press had no effect. Likely causes:
-- You're not adjacent to or facing the target. Use render_ascii_map to check position.
-- You need to move closer first. Walk toward the target with press_and_read(key="direction").
-- Don't repeat the same action more than 3 times if text stays blank — reposition instead.
+WORKFLOW:
+1. ORIENT: Call render_ascii_map. Note your @ position and the target's position.
+2. NAVIGATE: Calculate direction (compare coordinates). Walk step by step toward the target.
+3. INTERACT: When adjacent, press the direction key toward the target to face it, then press A.
+4. READ: Check text_lines. If text appears, the interaction worked. Navigate the menu.
+5. VERIFY: Confirm the goal is done from screen text. Call report_result.
+
+BLANK SCREEN = NO INTERACTION:
+Empty text_lines after pressing A means you're not adjacent to or facing anything interactable.
+- STOP pressing A blindly. Call render_ascii_map to see your current position.
+- Compare your position to the target and navigate toward it.
+- If you get 3+ blank results in a row, you MUST call render_ascii_map before any more button presses.
 
 MENU NAVIGATION (PC, shops, NPCs):
 - A confirms/advances, B cancels/backs out. Arrow keys navigate menu items.
+- ▶ or ▷ markers show cursor position in menus.
 - When you see a menu with items (e.g. "WITHDRAW ITEM"), press A to select.
 - When prompted for quantity (e.g. "×1"), press A to confirm the amount.
 - Keep pressing A through ALL confirmation dialogs until you see the result message.
-- Pokemon Yellow menus often need 3-5 A presses to complete an action: select menu → select item → confirm quantity → receive confirmation.
+- Pokemon Yellow menus often need 3-5 A presses to complete an action.
 - NEVER press B unless you intentionally want to CANCEL or EXIT a menu.
 
 VERIFICATION — NEVER assume or hallucinate:
