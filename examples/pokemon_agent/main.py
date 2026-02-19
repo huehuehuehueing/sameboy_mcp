@@ -680,8 +680,42 @@ Use tools to analyze the situation, then call report_result with your action."""
 
                 await self._execute_overworld_decision(decision, state)
 
+            case GameMode.DIALOG | GameMode.MENU if self._autopilot or self._active_instruction:
+                # When autopilot is on or an instruction is active, let the
+                # LLM handle dialogs/menus — it already has press_and_read
+                # and decode_screen_text to navigate them.
+                operator_instruction = ""
+                if self._active_instruction:
+                    operator_instruction = (
+                        f"[OPERATOR INSTRUCTION: {self._active_instruction}]\n"
+                        "Follow this instruction. Use press_and_read to interact with the current menu/dialog.\n\n"
+                    )
+
+                dialog_context = f"""{operator_instruction}Dialog/Menu active:
+Map: {state.map_name} (ID: {state.map_id})
+Position: ({state.player_x}, {state.player_y})
+
+The screen currently shows a dialog or menu. Use decode_screen_text or press_and_read to read and navigate it.
+- A confirms / advances text
+- B cancels / exits menus
+- Arrow keys navigate menu items
+
+Call report_result when done."""
+
+                decision = await self._llm_agent.run_with_tools(
+                    STRATEGY_SYSTEM_PROMPT,
+                    dialog_context,
+                    max_turns=60,
+                )
+
+                if decision.get("_no_llm"):
+                    await self._routines.wait_frames(60)
+                    return True
+
+                await self._execute_overworld_decision(decision, state)
+
             case _:
-                # Non-battle/overworld modes (dialog, name entry, intro, etc.)
+                # Non-battle/overworld modes (name entry, intro, etc.)
                 # are handled via dashboard actions only
                 await self._routines.wait_frames(self.config.cycle_frames)
 
