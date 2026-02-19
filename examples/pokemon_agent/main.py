@@ -112,6 +112,15 @@ class PokemonAgent:
         if self._event_sink:
             self._event_sink.emit_llm_message("agent", msg)
 
+    def _handle_stopped_decision(self, decision: dict) -> bool:
+        """If the LLM was stopped by dashboard, disable autopilot. Returns True if stopped."""
+        if decision.get("_stopped"):
+            self._autopilot = False
+            self._active_instruction = None
+            self._log_action(f"[{self._step_count}] STOPPED by dashboard")
+            return True
+        return False
+
     async def _log_intro_debug(self, state):
         """Log debug info for intro sequence: names, PC, disassembly."""
         from examples.pokemon_agent import memory_map as mem
@@ -623,6 +632,8 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                     battle_context,
                     max_turns=60,
                 )
+                if self._handle_stopped_decision(decision):
+                    return True
 
                 action = decision.get("action", "move")
                 index = decision.get("index", 0)
@@ -755,6 +766,8 @@ Use tools to analyze the situation, then call report_result with your action."""
                     strategy_context,
                     max_turns=60,
                 )
+                if self._handle_stopped_decision(decision):
+                    return True
 
                 # When LLM is unavailable, wait for dashboard actions
                 if decision.get("_no_llm"):
@@ -822,6 +835,8 @@ Call report_result as soon as the dialog closes (blank text_lines)."""
                     dialog_context,
                     max_turns=15,
                 )
+                if self._handle_stopped_decision(decision):
+                    return True
 
                 if decision.get("_no_llm"):
                     self._log_action(
@@ -938,6 +953,8 @@ Use tools to analyze the situation, then call report_result with your action."""
                         strategy_context,
                         max_turns=60,
                     )
+                    if self._handle_stopped_decision(decision):
+                        return True
                     if not decision.get("_no_llm"):
                         await self._execute_overworld_decision(decision, state)
                     if self._active_instruction:

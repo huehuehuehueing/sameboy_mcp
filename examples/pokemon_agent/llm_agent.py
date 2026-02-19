@@ -189,6 +189,17 @@ class LLMToolAgent:
         if self._verbose:
             print(f"  [llm-agent] {msg}")
 
+    def _check_stop(self) -> bool:
+        """Check if the dashboard sent a STOP signal."""
+        if not self._event_sink:
+            return False
+        pending = self._event_sink.get_pending_actions()
+        if pending:
+            action_id = pending[0].get("action_id", "")
+            if action_id == "stop":
+                return True
+        return False
+
     def check_connection(self) -> bool:
         """Verify LLM is reachable. Returns True if healthy."""
         if not self._client:
@@ -406,6 +417,11 @@ class LLMToolAgent:
         BLANK_THRESHOLD = 3
 
         for turn in range(max_turns):
+            # Check for STOP signal from dashboard before each LLM call
+            if self._check_stop():
+                self._log("STOP signal received — aborting LLM turn")
+                return {"action": "wait", "frames": 60, "_stopped": True}
+
             self._log(f"turn {turn + 1}/{max_turns}")
 
             try:
@@ -451,6 +467,11 @@ class LLMToolAgent:
                         func_args = json.loads(tool_call.function.arguments)
                     except json.JSONDecodeError:
                         func_args = {}
+
+                    # Check for STOP signal before executing each tool
+                    if self._check_stop():
+                        self._log("STOP signal received — aborting mid-turn")
+                        return {"action": "wait", "frames": 60, "_stopped": True}
 
                     # Execute the tool
                     result = await self._execute_tool(func_name, func_args)
