@@ -1,0 +1,92 @@
+======================================================================
+  LIVE TEST — gpt-4.1 + Real MCP + Save States
+======================================================================
+Connected! 73 MCP tools → BATTLE=4 STRATEGY=12 DIALOG=4
+
+======================================================================
+  BATTLE — battle_start.sav
+======================================================================
+  State: Pallet Town | Tools: 4
+
+  Turn 1: 2090p + 63c
+    ✓ report_result: action=move | Thunder Shock is an Electric-type move, which is super effective against Pidgey
+  ── 1 calls | 2090p + 63c | cached: 0 | 2.0s
+
+======================================================================
+  STRATEGY — route1_in_grass.sav
+======================================================================
+  State: Pallet Town | Tools: 12
+
+  Turn 1: 3327p + 17c
+    → render_ascii_map: Route 1 (20x36) — 0 warps, 2 sprites
+
+  Turn 2: 3971p + 15c (cached: 3328)
+    → press_and_read: (blank) @(9,28)
+
+  Turn 3: 4021p + 15c
+    → press_and_read: (blank) @(9,28)
+
+  Turn 4: 4071p + 15c
+    → press_and_read: (blank) @(9,28)
+
+  Turn 5: 4121p + 15c (cached: 3968)
+    → press_and_read: 99999999999999999999 | ... @(9,28)
+  ── 5 calls | 19511p + 77c | cached: 7296 | 8.6s
+
+======================================================================
+  DIALOG — viridian_pokecenter.sav
+======================================================================
+  State: Pallet Town | Tools: 4
+
+  Turn 1: 1318p + 11c
+    → decode_screen_text: (blank)
+
+  Turn 2: 1425p + 40c (cached: 1280)
+    ✓ report_result: action=interact | The screen text is blank, indicating that the dialog or menu has closed.
+  ── 2 calls | 2743p + 51c | cached: 1280 | 2.6s
+
+======================================================================
+  STRATEGY — pc_menu.sav
+======================================================================
+  State: Pallet Town | Tools: 12
+
+  Turn 1: 3304p + 42c (cached: 2816)
+    → render_ascii_map: Player House 2F (8x8) — 1 warps, 0 sprites
+    → read_inventory: 1 items: Potionx1
+
+  Turn 2: 3616p + 60c (cached: 3328)
+    ✓ report_result: action=interact | I checked the PC inventory and found 1 Potion.
+  ── 3 calls | 6920p + 102c | cached: 6144 | 4.4s
+
+======================================================================
+  BASELINE — ALL 74 tools (old approach)
+======================================================================
+  7489 prompt tokens | 1.6s
+
+======================================================================
+  RESUMEN — gpt-4.1 LIVE TEST
+======================================================================
+
+Scenario                                   Tools Turns   Prompt   Cached   Time
+--------------------------------------------------------------------------------
+  BATTLE — battle_start.sav                    4     1     2090        0   2.0s
+  STRATEGY — route1_in_grass.sav              12     5    19511     7296   8.6s
+  DIALOG — viridian_pokecenter.sav             4     2     2743     1280   2.6s
+  STRATEGY — pc_menu.sav                      12     2     6920     6144   4.4s
+
+  Baseline: 7489 tokens/call (74 tools)
+  Filtered: 3126 tokens/call average
+  Savings: 58%
+  Total cached: 14720 tokens
+
+  Cost per 50 calls (gpt-4.1 $2/1M):
+    Old: $0.7489
+    New: $0.3126
+    Saved: $0.4363
+
+  Cost per 100 calls (gpt-4.1 $2/1M):
+    Old: $1.4978
+    New: $0.6252
+    Saved: $0.8726
+
+  ✓ ALL TESTS PASSED WITH gpt-4.1

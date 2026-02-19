@@ -50,7 +50,11 @@ from examples.pokemon_agent.game_state import GameStateReader, GameMode
 from examples.pokemon_agent.game_analysis import GameAnalyzer
 from examples.pokemon_agent.routines import Routines
 from examples.pokemon_agent.strategy import StrategyEngine
-from examples.pokemon_agent.llm_agent import LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT, DIALOG_SYSTEM_PROMPT, mcp_tools_to_openai
+from examples.pokemon_agent.llm_agent import (
+    LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT,
+    DIALOG_SYSTEM_PROMPT, mcp_tools_to_openai,
+    BATTLE_TOOLS, STRATEGY_TOOLS, DIALOG_TOOLS, filter_tools,
+)
 from examples.pokemon_agent.area_analyzer import AreaAnalyzer, AreaData
 from examples.pokemon_agent.cost_tracker import CostTracker
 
@@ -269,6 +273,12 @@ class PokemonAgent:
 
         openai_tools = mcp_tools_to_openai(tools_result.tools)
         self._llm_agent.set_tools(openai_tools)
+
+        # Build per-mode tool lists (reduces tool tokens by ~90%)
+        self._battle_tools = filter_tools(openai_tools, BATTLE_TOOLS)
+        self._strategy_tools = filter_tools(openai_tools, STRATEGY_TOOLS)
+        self._dialog_tools = filter_tools(openai_tools, DIALOG_TOOLS)
+
         self._llm_agent.set_panel_tools({
             "render_ascii_map": "ascii_map",
             "decode_screen_text": "screen_text",
@@ -678,6 +688,8 @@ class PokemonAgent:
                     BATTLE_SYSTEM_PROMPT,
                     battle_context,
                     max_turns=60,
+                    tools=self._battle_tools,
+                    cache_key="battle",
                 )
                 if self._handle_stopped_decision(decision):
                     return True
@@ -810,6 +822,8 @@ Use tools to analyze the situation, then call report_result with your action."""
                     STRATEGY_SYSTEM_PROMPT,
                     strategy_context,
                     max_turns=60,
+                    tools=self._strategy_tools,
+                    cache_key="strategy",
                 )
                 if self._handle_stopped_decision(decision):
                     return True
@@ -887,6 +901,8 @@ Navigate it and call report_result when the dialog closes (blank text_lines)."""
                     DIALOG_SYSTEM_PROMPT,
                     dialog_context,
                     max_turns=20,
+                    tools=self._dialog_tools,
+                    cache_key="dialog",
                 )
                 if self._handle_stopped_decision(decision):
                     return True
@@ -1005,6 +1021,8 @@ Use tools to analyze the situation, then call report_result with your action."""
                         STRATEGY_SYSTEM_PROMPT,
                         strategy_context,
                         max_turns=60,
+                        tools=self._strategy_tools,
+                        cache_key="strategy",
                     )
                     if self._handle_stopped_decision(decision):
                         return True

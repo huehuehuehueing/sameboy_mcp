@@ -18,6 +18,30 @@ from .config import AgentConfig
 from .cost_tracker import CostTracker
 
 
+# ============================================================
+# Per-mode tool sets — only these tools are visible to the LLM.
+# The LLM can still *execute* any MCP tool via _execute_tool(),
+# but limiting visibility reduces context tokens by ~90%.
+# ============================================================
+
+BATTLE_TOOLS = {
+    "read_memory", "press_and_read", "decode_screen_text", "report_result",
+}
+STRATEGY_TOOLS = {
+    "press_and_read", "wait_and_read", "render_ascii_map", "decode_screen_text",
+    "read_memory", "write_memory", "read_inventory", "set_inventory",
+    "read_money", "set_money", "report_result",
+}
+DIALOG_TOOLS = {
+    "press_and_read", "wait_and_read", "decode_screen_text", "report_result",
+}
+
+
+def filter_tools(all_tools: list[dict], allowed: set[str]) -> list[dict]:
+    """Filter an OpenAI tool list to only include tools in the allowed set."""
+    return [t for t in all_tools if t["function"]["name"] in allowed]
+
+
 # report_result is a synthetic tool (not on the MCP server) that the LLM
 # calls to return its decision to the agent.
 REPORT_RESULT_TOOL = {
@@ -355,6 +379,8 @@ class LLMToolAgent:
         system_prompt: str,
         user_message: str,
         max_turns: int = 5,
+        tools: list[dict] | None = None,
+        cache_key: str | None = None,
     ) -> dict:
         """
         Run the LLM with tool access until it reports a result.
@@ -363,6 +389,10 @@ class LLMToolAgent:
             system_prompt: System instructions for the LLM
             user_message: User message describing the task
             max_turns: Maximum tool-calling turns
+            tools: Override tool list (use filter_tools() to build per-mode sets).
+                   Falls back to self._tools if None.
+            cache_key: Optional prompt cache key for OpenAI routing optimization.
+                       Use a stable string per mode (e.g. "battle", "strategy").
 
         Returns:
             The result from the report_result tool call
@@ -413,6 +443,17 @@ class LLMToolAgent:
             {"role": "system", "content": system_prompt},
         ] + list(self._message_history)
 
+        # Resolve tool list: per-mode override or full set
+        active_tools = tools if tools is not None else self._tools
+        if tools is not None:
+            tool_names = [t["function"]["name"] for t in active_tools]
+            self._log(f"mode tools: {', '.join(tool_names)}")
+
+        # Build extra_body for prompt cache routing (OpenAI)
+        extra_body = {}
+        if cache_key:
+            extra_body["prompt_cache_key"] = cache_key
+
         consecutive_blanks = 0
         BLANK_THRESHOLD = 3
 
@@ -428,10 +469,11 @@ class LLMToolAgent:
                 response = self._client.chat.completions.create(
                     model=self._model,
                     messages=messages,
-                    tools=self._tools,
+                    tools=active_tools,
                     tool_choice="auto",
                     max_tokens=1024,
                     temperature=0.3,
+                    **({"extra_body": extra_body} if extra_body else {}),
                 )
             except Exception as e:
                 self._consecutive_errors += 1
@@ -447,10 +489,20 @@ class LLMToolAgent:
             # Success — reset error counter
             self._consecutive_errors = 0
 
-            # Track cost
+            # Track cost and cache hits
             if response.usage:
                 step_cost = self.cost_tracker.track_openai(response.usage, self._model)
-                self._log(f"step cost: ${step_cost:.6f} (total: ${self.cost_tracker.total_cost:.4f})")
+                # Log cache hit info
+                total_input = response.usage.prompt_tokens or 0
+                cached = 0
+                details = getattr(response.usage, "prompt_tokens_details", None)
+                if details and hasattr(details, "cached_tokens"):
+                    cached = details.cached_tokens or 0
+                if cached > 0:
+                    pct = cached / total_input * 100 if total_input else 0
+                    self._log(f"step cost: ${step_cost:.6f} | cache hit: {cached}/{total_input} ({pct:.0f}%) | total: ${self.cost_tracker.total_cost:.4f}")
+                else:
+                    self._log(f"step cost: ${step_cost:.6f} | no cache hit ({total_input} tokens) | total: ${self.cost_tracker.total_cost:.4f}")
 
             choice = response.choices[0]
             message = choice.message
