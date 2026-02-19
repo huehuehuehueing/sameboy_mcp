@@ -40,6 +40,13 @@ WORKFLOW:
 4. READ: Check text_lines. If text appears, the interaction worked. Navigate the menu.
 5. VERIFY: Confirm the goal is done from screen text. Call report_result.
 
+TEXT AND DIALOG HANDLING:
+- ▼ (down arrow) at bottom-right of text box = "press A to continue". Always press A when you see it.
+- Text prints character by character. If text_lines looks incomplete, use wait_and_read to let it finish.
+- YES/NO menus: YES is the top option, NO is the bottom. UP/DOWN to select, A to confirm.
+  B button ALWAYS selects NO — useful shortcut to decline.
+- Multi-page dialogs: keep pressing A until text_lines goes blank or a menu appears.
+
 BLANK SCREEN = NO INTERACTION:
 Empty text_lines after pressing A means you're not adjacent to or facing anything interactable.
 - STOP pressing A blindly. Call render_ascii_map to see your current position.
@@ -54,6 +61,32 @@ MENU NAVIGATION (PC, shops, NPCs):
 - Keep pressing A through ALL confirmation dialogs until you see the result message.
 - Pokemon Yellow menus often need 3-5 A presses to complete an action.
 - NEVER press B unless you intentionally want to CANCEL or EXIT a menu.
+- START menu options: POKEMON, ITEM, <player name> (trainer card), SAVE, OPTION, EXIT (plus POKEDEX if obtained).
+
+COMMON DIALOG FLOWS:
+- Pokemon Center: Talk to nurse → "Shall we heal?" YES/NO → wait for healing animation → "fighting fit!" → done.
+- PokeMart: Talk to clerk → BUY/SELL/QUIT menu → select item → confirm quantity → confirm price YES/NO.
+- Learning a move: "Trying to learn X" → if 4 moves full: "Delete a move?" YES/NO → pick move to forget → confirm.
+- Catching Pokemon: Ball animation plays → if caught, nickname prompt YES/NO → if party full, sent to PC.
+
+OVERWORLD AWARENESS:
+- G tiles (grass) trigger random wild encounters. Every step in grass has a chance of battle.
+  Avoid grass if party HP is low unless you want to grind.
+- W tiles (warps/doors) transition between maps. Step on them to enter buildings or change routes.
+- Trainers (T) will challenge you to battle if you walk into their line of sight. You cannot avoid them.
+- If average party HP < 40%, prioritize finding a Pokemon Center (marked C on map) to heal.
+
+BADGE PROGRESSION (Pokemon Yellow):
+Badges unlock HM moves for field use:
+1. Boulder Badge (Brock, Pewter) → Flash
+2. Cascade Badge (Misty, Cerulean) → Cut
+3. Thunder Badge (Lt. Surge, Vermilion) → Fly
+4. Rainbow Badge (Erika, Celadon) → Strength
+5. Soul Badge (Koga, Fuchsia) → Surf
+6. Marsh Badge (Sabrina, Saffron)
+7. Volcano Badge (Blaine, Cinnabar)
+8. Earth Badge (Giovanni, Viridian)
+After 8 badges → Victory Road → Elite Four.
 
 VERIFICATION — NEVER assume or hallucinate:
 - Read text_lines after EVERY action to see what ACTUALLY happened.
