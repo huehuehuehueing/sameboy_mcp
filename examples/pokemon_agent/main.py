@@ -89,6 +89,10 @@ class PokemonAgent:
         self._movement_history: list[tuple[int, int, int, str]] = []  # (map_id, x, y, direction) for backtracking
         self._max_history = 50  # Keep last N movements
 
+        # Manual control mode: when a prompt injection is received, pause
+        # LLM autonomy and only process dashboard actions until re-engaged.
+        self._manual_mode = False
+
     def _log_action(self, msg: str):
         """Print a compact action line to console and emit to dashboard."""
         print(msg)
@@ -235,6 +239,7 @@ class PokemonAgent:
         # Register dashboard action buttons
         if self._event_sink:
             self._event_sink.emit_action_registry([
+                {"id": "resume",        "label": "Resume LLM", "group": "control"},
                 {"id": "find_exit",     "label": "Find Exit",  "group": "navigation"},
                 {"id": "explore_up",    "label": "\u2191",     "group": "explore"},
                 {"id": "explore_down",  "label": "\u2193",     "group": "explore"},
@@ -308,18 +313,122 @@ class PokemonAgent:
             print(f"  Area analysis error: {e}")
             self._last_analyzed_map_id = state.map_id  # Still update to avoid retrying
 
+    async def _execute_overworld_decision(self, decision: dict, state) -> None:
+        """Execute an LLM overworld decision."""
+        action = decision.get("action", "explore")
+        pos = f"({state.player_x},{state.player_y})"
+        current_pos = (state.map_id, state.player_x, state.player_y)
+
+        if action == "explore":
+            direction = decision.get("direction", "up")
+            steps = decision.get("steps", 1)
+            steps = min(steps, 5)
+
+            walkable = await self._routines.get_walkable_directions()
+            if direction not in walkable and walkable:
+                alt_direction = walkable[0]
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos}"
+                    f" → {direction} blocked, walk {alt_direction} x{steps}"
+                )
+                direction = alt_direction
+            else:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos}"
+                    f" → walk {direction} x{steps}"
+                )
+
+            success = await self._routines.walk(direction, steps)
+            if not success and walkable:
+                self._log_action(f"  blocked — exploring around")
+                await self._routines.explore_area(max_steps=3)
+
+        elif action == "heal":
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → heal")
+            await self._routines.use_pokecenter()
+
+        elif action == "interact":
+            if current_pos not in self._interacted_objects:
+                self._log_action(f"[{self._step_count}] {state.map_name} {pos} → interact")
+                self._interacted_objects.add(current_pos)
+                await self._routines.interact()
+
+                if self._area_analyzer:
+                    items_here = self._area_analyzer.get_items_at(
+                        state.map_id, state.player_x, state.player_y
+                    )
+                    for item in items_here:
+                        if not item.collected:
+                            self._log_action(f"  collected {item.item_name or 'item'}")
+                            self._area_analyzer.mark_item_collected(
+                                state.map_id, item.x, item.y
+                            )
+            else:
+                self._log_action(f"[{self._step_count}] {state.map_name} {pos} → already interacted, moving on")
+                walkable = await self._routines.get_walkable_directions()
+                if walkable:
+                    await self._routines.walk(walkable[0], 1)
+
+        elif action == "collect_item":
+            if self._area_analyzer:
+                nearest = self._area_analyzer.get_nearest_item(
+                    state.map_id, state.player_x, state.player_y
+                )
+                if nearest:
+                    item, dist = nearest
+                    self._log_action(
+                        f"[{self._step_count}] {state.map_name} {pos}"
+                        f" → collect {item.item_name or 'item'} at ({item.x},{item.y})"
+                    )
+                    dx = item.x - state.player_x
+                    dy = item.y - state.player_y
+                    if abs(dx) > abs(dy):
+                        await self._routines.walk("right" if dx > 0 else "left", 1)
+                    elif abs(dy) > 0:
+                        await self._routines.walk("down" if dy > 0 else "up", 1)
+                    else:
+                        await self._routines.interact()
+                        self._area_analyzer.mark_item_collected(state.map_id, item.x, item.y)
+                        self._log_action(f"  collected {item.item_name or 'item'}")
+                else:
+                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → no items nearby")
+                    walkable = await self._routines.get_walkable_directions()
+                    if walkable:
+                        await self._routines.walk(walkable[0], 1)
+
+        elif action == "wait":
+            frames = decision.get("frames", 60)
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → wait {frames}f")
+            await self._routines.wait_frames(min(frames, 120))
+
+        elif action == "find_exit":
+            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → find_exit")
+            changed = await self._routines.navigate_to_exit()
+            if changed:
+                self._log_action(f"  exited map")
+            else:
+                self._log_action(f"  navigate_to_exit failed")
+
+        else:
+            walkable = await self._routines.get_walkable_directions()
+            if walkable:
+                direction = walkable[self._step_count % len(walkable)]
+                self._log_action(f"[{self._step_count}] {state.map_name} {pos} → walk {direction} (fallback)")
+                await self._routines.walk(direction, 1)
+            else:
+                await self._routines.wait_frames(30)
+
     async def _handle_dashboard_action(self, action_id: str, state) -> bool:
         """Handle an action triggered from the dashboard. Returns True if handled."""
         pos = f"({state.player_x},{state.player_y})"
         match action_id:
             case "find_exit":
                 self._log_action(f"[dash] {state.map_name} {pos} → find_exit")
-                exit_dir = await self._routines.find_exit()
-                if exit_dir:
-                    self._log_action(f"  exit: {exit_dir}")
-                    await self._routines.walk(exit_dir, 1)
+                changed = await self._routines.navigate_to_exit()
+                if changed:
+                    self._log_action(f"  exited map")
                 else:
-                    self._log_action(f"  no exit found")
+                    self._log_action(f"  navigate_to_exit failed")
             case "explore_up":
                 self._log_action(f"[dash] {state.map_name} {pos} → walk up")
                 await self._routines.walk("up", 1)
@@ -387,12 +496,46 @@ class PokemonAgent:
         if self._event_sink:
             pending = self._event_sink.get_pending_actions()
             if pending:
-                handled = await self._handle_dashboard_action(pending[0].get("action_id", ""), state)
-                if handled:
-                    await self._routines.wait_frames(self.config.cycle_frames)
-                    return True
+                action_id = pending[0].get("action_id", "")
+                # "resume" exits manual mode and re-engages the LLM
+                if action_id == "resume":
+                    self._manual_mode = False
+                    self._log_action(f"[{self._step_count}] LLM re-engaged")
+                else:
+                    handled = await self._handle_dashboard_action(action_id, state)
+                    if handled:
+                        await self._routines.wait_frames(self.config.cycle_frames)
+                        return True
 
-        # When LLM is unavailable, skip all coded routines — wait for dashboard actions
+            # Prompt injection → enter manual mode after feeding to LLM
+            injections = self._event_sink.get_pending_injections()
+            if injections:
+                self._manual_mode = True
+                self._log_action(f"[{self._step_count}] Manual mode — injecting prompt, then pausing LLM")
+                # Feed the injection through one LLM cycle
+                injection_text = " | ".join(injections)
+                if state.mode == GameMode.OVERWORLD:
+                    decision = await self._llm_agent.run_with_tools(
+                        STRATEGY_SYSTEM_PROMPT,
+                        f"[OPERATOR INSTRUCTION: {injection_text}]\n\n"
+                        f"Map: {state.map_name} (ID: {state.map_id})\n"
+                        f"Position: ({state.player_x}, {state.player_y})",
+                        max_turns=3,
+                    )
+                    if not decision.get("_no_llm"):
+                        await self._execute_overworld_decision(decision, state)
+                await self._routines.wait_frames(self.config.cycle_frames)
+                return True
+
+        # When in manual mode or LLM unavailable, wait for dashboard actions
+        if self._manual_mode:
+            if self._step_count % 30 == 0:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} — manual mode, use dashboard actions (Resume to re-engage LLM)"
+                )
+            await self._routines.wait_frames(60)
+            return True
+
         if self._llm_agent and not self._llm_agent.is_available:
             if self._step_count % 30 == 0:
                 self._log_action(
@@ -509,111 +652,7 @@ Use tools to analyze the situation, then call report_result with your action."""
                     await self._routines.wait_frames(60)
                     return True
 
-                action = decision.get("action", "explore")
-                reason = decision.get("reasoning", "")
-                pos = f"({state.player_x},{state.player_y})"
-
-                if action == "explore":
-                    direction = decision.get("direction", "up")
-                    steps = decision.get("steps", 1)
-                    steps = min(steps, 5)  # Safety limit
-
-                    # Check if direction is walkable first
-                    walkable = await self._routines.get_walkable_directions()
-                    if direction not in walkable and walkable:
-                        alt_direction = walkable[0]
-                        self._log_action(
-                            f"[{self._step_count}] {state.map_name} {pos}"
-                            f" → {direction} blocked, walk {alt_direction} x{steps}"
-                        )
-                        direction = alt_direction
-                    else:
-                        self._log_action(
-                            f"[{self._step_count}] {state.map_name} {pos}"
-                            f" → walk {direction} x{steps}"
-                        )
-
-                    success = await self._routines.walk(direction, steps)
-                    if not success and walkable:
-                        self._log_action(f"  blocked — exploring around")
-                        await self._routines.explore_area(max_steps=3)
-
-                elif action == "heal":
-                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → heal")
-                    await self._routines.use_pokecenter()
-
-                elif action == "interact":
-                    if current_pos not in self._interacted_objects:
-                        self._log_action(f"[{self._step_count}] {state.map_name} {pos} → interact")
-                        self._interacted_objects.add(current_pos)
-                        await self._routines.interact()
-
-                        if self._area_analyzer:
-                            items_here = self._area_analyzer.get_items_at(
-                                state.map_id, state.player_x, state.player_y
-                            )
-                            for item in items_here:
-                                if not item.collected:
-                                    self._log_action(f"  collected {item.item_name or 'item'}")
-                                    self._area_analyzer.mark_item_collected(
-                                        state.map_id, item.x, item.y
-                                    )
-                    else:
-                        self._log_action(f"[{self._step_count}] {state.map_name} {pos} → already interacted, moving on")
-                        walkable = await self._routines.get_walkable_directions()
-                        if walkable:
-                            await self._routines.walk(walkable[0], 1)
-
-                elif action == "collect_item":
-                    if self._area_analyzer:
-                        nearest = self._area_analyzer.get_nearest_item(
-                            state.map_id, state.player_x, state.player_y
-                        )
-                        if nearest:
-                            item, dist = nearest
-                            self._log_action(
-                                f"[{self._step_count}] {state.map_name} {pos}"
-                                f" → collect {item.item_name or 'item'} at ({item.x},{item.y})"
-                            )
-                            dx = item.x - state.player_x
-                            dy = item.y - state.player_y
-                            if abs(dx) > abs(dy):
-                                await self._routines.walk("right" if dx > 0 else "left", 1)
-                            elif abs(dy) > 0:
-                                await self._routines.walk("down" if dy > 0 else "up", 1)
-                            else:
-                                await self._routines.interact()
-                                self._area_analyzer.mark_item_collected(state.map_id, item.x, item.y)
-                                self._log_action(f"  collected {item.item_name or 'item'}")
-                        else:
-                            self._log_action(f"[{self._step_count}] {state.map_name} {pos} → no items nearby")
-                            walkable = await self._routines.get_walkable_directions()
-                            if walkable:
-                                await self._routines.walk(walkable[0], 1)
-
-                elif action == "wait":
-                    frames = decision.get("frames", 60)
-                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → wait {frames}f")
-                    await self._routines.wait_frames(min(frames, 120))
-
-                elif action == "find_exit":
-                    self._log_action(f"[{self._step_count}] {state.map_name} {pos} → find_exit")
-                    exit_dir = await self._routines.find_exit()
-                    if exit_dir:
-                        self._log_action(f"  exit: {exit_dir}")
-                        await self._routines.walk(exit_dir, 1)
-                    else:
-                        self._log_action(f"  no exit found, exploring")
-                        await self._routines.explore_area(max_steps=5)
-
-                else:
-                    walkable = await self._routines.get_walkable_directions()
-                    if walkable:
-                        direction = walkable[self._step_count % len(walkable)]
-                        self._log_action(f"[{self._step_count}] {state.map_name} {pos} → walk {direction} (fallback)")
-                        await self._routines.walk(direction, 1)
-                    else:
-                        await self._routines.wait_frames(30)
+                await self._execute_overworld_decision(decision, state)
 
             case _:
                 # Non-battle/overworld modes (dialog, name entry, intro, etc.)
