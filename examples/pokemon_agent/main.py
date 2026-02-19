@@ -50,7 +50,7 @@ from examples.pokemon_agent.game_state import GameStateReader, GameMode
 from examples.pokemon_agent.game_analysis import GameAnalyzer
 from examples.pokemon_agent.routines import Routines
 from examples.pokemon_agent.strategy import StrategyEngine
-from examples.pokemon_agent.llm_agent import LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT, mcp_tools_to_openai
+from examples.pokemon_agent.llm_agent import LLMToolAgent, BATTLE_SYSTEM_PROMPT, STRATEGY_SYSTEM_PROMPT, DIALOG_SYSTEM_PROMPT, mcp_tools_to_openai
 from examples.pokemon_agent.area_analyzer import AreaAnalyzer, AreaData
 from examples.pokemon_agent.cost_tracker import CostTracker
 
@@ -681,31 +681,23 @@ Use tools to analyze the situation, then call report_result with your action."""
                 await self._execute_overworld_decision(decision, state)
 
             case GameMode.DIALOG | GameMode.MENU if self._autopilot or self._active_instruction:
-                # When autopilot is on or an instruction is active, let the
-                # LLM handle dialogs/menus — it already has press_and_read
-                # and decode_screen_text to navigate them.
+                # Short LLM call focused only on the current dialog/menu.
+                # Uses DIALOG_SYSTEM_PROMPT (no exploration) and low max_turns
+                # so control returns quickly for the next cycle.
                 operator_instruction = ""
                 if self._active_instruction:
                     operator_instruction = (
-                        f"[OPERATOR INSTRUCTION: {self._active_instruction}]\n"
-                        "Follow this instruction. Use press_and_read to interact with the current menu/dialog.\n\n"
+                        f"[OPERATOR INSTRUCTION: {self._active_instruction}]\n\n"
                     )
 
-                dialog_context = f"""{operator_instruction}Dialog/Menu active:
-Map: {state.map_name} (ID: {state.map_id})
-Position: ({state.player_x}, {state.player_y})
-
-The screen currently shows a dialog or menu. Use decode_screen_text or press_and_read to read and navigate it.
-- A confirms / advances text
-- B cancels / exits menus
-- Arrow keys navigate menu items
-
-Call report_result when done."""
+                dialog_context = f"""{operator_instruction}A dialog or menu is open.
+Use decode_screen_text to see what's on screen, then navigate it.
+Call report_result as soon as the dialog closes (blank text_lines)."""
 
                 decision = await self._llm_agent.run_with_tools(
-                    STRATEGY_SYSTEM_PROMPT,
+                    DIALOG_SYSTEM_PROMPT,
                     dialog_context,
-                    max_turns=60,
+                    max_turns=15,
                 )
 
                 if decision.get("_no_llm"):
