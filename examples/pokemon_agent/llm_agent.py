@@ -50,6 +50,52 @@ REPORT_RESULT_TOOL = {
 }
 
 
+def _sanitize_schema(schema: dict) -> dict:
+    """Sanitize a JSON Schema for OpenAI function-calling compatibility.
+
+    OpenAI rejects schemas that use newer JSON Schema features like
+    prefixItems, anyOf-with-null, or arrays without 'items'.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    schema = dict(schema)  # shallow copy
+
+    # anyOf with null → collapse to the non-null branch
+    if "anyOf" in schema:
+        branches = schema["anyOf"]
+        non_null = [b for b in branches if b.get("type") != "null"]
+        if len(non_null) == 1:
+            # Replace this node with the non-null branch (+ nullable hint)
+            merged = _sanitize_schema(non_null[0])
+            schema.pop("anyOf")
+            schema.update(merged)
+        else:
+            schema["anyOf"] = [_sanitize_schema(b) for b in branches]
+
+    # Array with prefixItems but no items → convert to items
+    if schema.get("type") == "array":
+        if "prefixItems" in schema and "items" not in schema:
+            prefix = schema.pop("prefixItems")
+            # Use the first element type as items type, or generic
+            if prefix:
+                schema["items"] = _sanitize_schema(prefix[0])
+            else:
+                schema["items"] = {}
+        elif "items" not in schema:
+            schema["items"] = {}
+        else:
+            schema["items"] = _sanitize_schema(schema["items"])
+
+    # Recurse into properties
+    if "properties" in schema:
+        schema["properties"] = {
+            k: _sanitize_schema(v) for k, v in schema["properties"].items()
+        }
+
+    return schema
+
+
 def mcp_tools_to_openai(mcp_tools) -> list[dict]:
     """Convert MCP Tool objects to OpenAI function-calling format.
 
@@ -67,7 +113,7 @@ def mcp_tools_to_openai(mcp_tools) -> list[dict]:
             "function": {
                 "name": tool.name,
                 "description": tool.description or "",
-                "parameters": schema,
+                "parameters": _sanitize_schema(schema),
             },
         })
 
