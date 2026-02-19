@@ -89,10 +89,11 @@ class PokemonAgent:
         self._movement_history: list[tuple[int, int, int, str]] = []  # (map_id, x, y, direction) for backtracking
         self._max_history = 50  # Keep last N movements
 
-        # Manual control mode: when a prompt injection is received, pause
-        # LLM autonomy and only process dashboard actions until re-engaged.
-        self._manual_mode = False
-        self._last_injection: str | None = None  # Replayed on resume
+        # Autopilot: when True, LLM runs every cycle autonomously.
+        # When False, LLM only runs for one-shot prompt injections.
+        # Resume/Stop buttons toggle this. Prompt injections always execute immediately.
+        self._autopilot = False
+        self._pending_injection: str | None = None  # One-shot LLM prompt
 
     def _log_action(self, msg: str):
         """Print a compact action line to console and emit to dashboard."""
@@ -240,8 +241,8 @@ class PokemonAgent:
         # Register dashboard action buttons
         if self._event_sink:
             self._event_sink.emit_action_registry([
-                {"id": "resume",        "label": "Resume LLM", "group": "control"},
-                {"id": "stop",          "label": "Stop LLM",   "group": "control"},
+                {"id": "resume",        "label": "Autopilot ON",  "group": "control"},
+                {"id": "stop",          "label": "Autopilot OFF", "group": "control"},
                 {"id": "find_exit",     "label": "Find Exit",  "group": "navigation"},
                 {"id": "explore_up",    "label": "\u2191",     "group": "explore"},
                 {"id": "explore_down",  "label": "\u2193",     "group": "explore"},
@@ -297,6 +298,16 @@ class PokemonAgent:
 
             # Print summary
             print(self._area_data.summary())
+
+            # Print ASCII map to console for verification
+            try:
+                map_result = await self.call_tool("render_ascii_map", {})
+                if isinstance(map_result, dict) and "ascii" in map_result:
+                    print(map_result["ascii"])
+                else:
+                    print(f"  (render_ascii_map returned: {type(map_result).__name__})")
+            except Exception as e:
+                print(f"  (render_ascii_map error: {e})")
 
             # Log any important findings
             if self._area_data.npcs:
@@ -500,12 +511,12 @@ class PokemonAgent:
             if pending:
                 action_id = pending[0].get("action_id", "")
                 if action_id == "resume":
-                    self._manual_mode = False
-                    self._log_action(f"[{self._step_count}] LLM re-engaged")
-                    # Fall through so the LLM runs this cycle with the stored injection
+                    self._autopilot = True
+                    self._log_action(f"[{self._step_count}] Autopilot ON")
+                    # Fall through so the LLM runs this cycle
                 elif action_id == "stop":
-                    self._manual_mode = True
-                    self._log_action(f"[{self._step_count}] LLM stopped — manual mode")
+                    self._autopilot = False
+                    self._log_action(f"[{self._step_count}] Autopilot OFF — waiting for prompts or dashboard actions")
                     await self._routines.wait_frames(self.config.cycle_frames)
                     return True
                 else:
@@ -514,20 +525,18 @@ class PokemonAgent:
                         await self._routines.wait_frames(self.config.cycle_frames)
                         return True
 
-            # Prompt injection → store it, enter manual mode
+            # Prompt injection → execute immediately with LLM this cycle
             injections = self._event_sink.get_pending_injections()
             if injections:
-                self._last_injection = " | ".join(injections)
-                self._manual_mode = True
-                self._log_action(f"[{self._step_count}] Manual mode — prompt stored, click Resume to execute with LLM")
-                await self._routines.wait_frames(self.config.cycle_frames)
-                return True
+                self._pending_injection = " | ".join(injections)
+                self._log_action(f"[{self._step_count}] Prompt received — executing with LLM")
+                # Fall through to LLM execution below
 
-        # When in manual mode or LLM unavailable, wait for dashboard actions
-        if self._manual_mode:
+        # When not on autopilot and no pending injection, wait
+        if not self._autopilot and not self._pending_injection:
             if self._step_count % 30 == 0:
                 self._log_action(
-                    f"[{self._step_count}] {state.map_name} — manual mode, use dashboard actions (Resume to re-engage LLM)"
+                    f"[{self._step_count}] {state.map_name} — waiting (send a prompt or click Resume for autopilot)"
                 )
             await self._routines.wait_frames(60)
             return True
@@ -622,11 +631,11 @@ Use read_memory to check HP and stats, then call report_result with your battle 
                         f"to navigate around the obstacle. ***"
                     )
 
-                # Prepend stored operator instruction if present
+                # Prepend operator instruction if this is a one-shot prompt
                 operator_instruction = ""
-                if self._last_injection:
-                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._last_injection}]\nFollow this instruction. Use decode_screen_text and render_ascii_map to understand the current state.\n\n"
-                    self._last_injection = None  # Consume after use
+                if self._pending_injection:
+                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._pending_injection}]\nFollow this instruction. Use decode_screen_text and render_ascii_map to understand the current state.\n\n"
+                    self._pending_injection = None  # Consume after use
 
                 strategy_context = f"""{operator_instruction}Overworld state:
 Map: {state.map_name} (ID: {state.map_id})

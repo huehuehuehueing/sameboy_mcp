@@ -96,7 +96,7 @@ MCP_TOOLS = [
         "type": "function",
         "function": {
             "name": "render_ascii_map",
-            "description": "Render an ASCII top-down map of the current area showing walkable tiles, walls, warps, NPCs, and the player position. Use this to understand the map layout and plan navigation.",
+            "description": "Render an ASCII top-down map of the current area. Legend: . = walkable, # = wall/blocked, @ = player, W = warp/door/stairs, G = grass, N = NPC, T = trainer, I = item ball, C = PC, B = bookshelf, ! = sign/interactable. Grid uses (x,y) coordinates shown in column/row headers.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
