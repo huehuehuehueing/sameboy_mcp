@@ -1037,13 +1037,23 @@ Navigate it and call report_result when the dialog closes (blank text_lines)."""
                     await self._routines.wait_frames(60)
                     return True
 
-                # The LLM already handled the dialog/menu via press_and_read
-                # inside run_with_tools — just log the outcome, no extra actions.
+                # For dialog-only actions (interact, wait, explore) the LLM
+                # already handled them via press_and_read — just log.
+                # But AUTOPILOT actions (navigate_route, navigate_to, find_exit,
+                # etc.) need to be dispatched to _execute_overworld_decision.
+                _AUTOPILOT_ACTIONS = {
+                    "navigate_route", "navigate_to", "find_exit",
+                    "find_pokecenter", "collect_item", "collect_hidden", "heal",
+                }
                 action = decision.get("action", "?")
-                pos = f"({state.player_x},{state.player_y})"
-                self._log_action(
-                    f"[{self._step_count}] {state.map_name} {pos} → {action}"
-                )
+                if action in _AUTOPILOT_ACTIONS:
+                    print(f"  [debug] DIALOG/MENU returned autopilot action {action!r}, dispatching to overworld handler")
+                    await self._execute_overworld_decision(decision, state)
+                else:
+                    pos = f"({state.player_x},{state.player_y})"
+                    self._log_action(
+                        f"[{self._step_count}] {state.map_name} {pos} → {action}"
+                    )
 
                 if self._active_instruction:
                     self._log_action(f"  instruction complete, waiting for next prompt")
