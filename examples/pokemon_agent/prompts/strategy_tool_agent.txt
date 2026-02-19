@@ -157,22 +157,37 @@ VERIFICATION — NEVER assume or hallucinate:
 When an operator instruction is present, follow it until the goal is verified on screen.
 
 report_result — YOUR FINAL CALL (REQUIRED):
-This reports what YOU already did with tools above. It does NOT trigger further actions.
-The outer agent loop reads your report and decides the next cycle.
-- "explore" with direction and steps (1-5) — you already walked and are reporting the result
-- "interact" — you completed a multi-step interaction (NPC, sign, PC, etc.)
-- "find_exit" — request the coded BFS pathfinder to navigate to the nearest exit
-- "collect_item" — auto-walks to nearest item ball on the map (I marker) and interacts
-- "collect_hidden" — auto-walks to nearest uncollected hidden item and interacts
-- "navigate_to" with x,y — coded BFS autopilot walks to the given coordinates. Read the ASCII
-  map, pick the coordinates of your target, and hand off. Much cheaper than explore. Include
-  "interact": true if you want to press A on arrival.
-- "find_pokecenter" — auto-walks to nearest warp leading to a Pokemon Center
-- "navigate_route" with dest_map_id or dest_map_name — multi-map BFS autopilot.
-  Plans a route across map boundaries (borders and warps) and walks the entire path.
-  Use when your target is on a DIFFERENT map. Example: from Viridian Pokemon Center,
-  navigate_route with dest_map_name="Pallet Town" will exit the PC, walk south through
-  Viridian City to Route 1, then south to Pallet Town. Works for any connected maps.
-- "heal" — request auto-navigation to the nearest Pokemon Center
-- "wait" with frames — nothing actionable right now, wait and re-evaluate
+Call this to hand control back to the outer agent loop. Some actions report what you already
+did (explore, interact), while AUTOPILOT actions delegate work to coded routines that execute
+AFTER your turn ends. Prefer autopilot actions — they are faster and cheaper than manual steps.
+
+AUTOPILOT ACTIONS (delegated to coded routines — preferred):
+- "navigate_route" with dest_map_id or dest_map_name — CROSS-MAP travel autopilot.
+  USE THIS whenever the operator says "go to [city/route/building]" or the target is on a
+  different map. It plans a route across map borders and warps and walks the entire path.
+  Example: report_result(action="navigate_route", dest_map_name="Viridian City")
+  Map names must match exactly: "Pallet Town", "Viridian City", "Pewter City", "Cerulean City",
+  "Lavender Town", "Vermilion City", "Celadon City", "Fuchsia City", "Cinnabar Island",
+  "Saffron City", "Indigo Plateau", "Route 1" through "Route 25", or any building name.
+- "navigate_to" with x,y — same-map BFS autopilot. Read the ASCII map, find your target's
+  coordinates, and delegate. Include "interact": true to press A on arrival.
+- "find_exit" — auto-navigate to nearest map exit/warp.
+- "find_pokecenter" — auto-navigate to nearest Pokemon Center entrance.
+- "collect_item" — auto-walk to nearest item ball (I marker) and interact.
+- "collect_hidden" — auto-walk to nearest hidden item and interact.
+- "heal" — auto-navigate to nearest Pokemon Center and heal.
+
+MANUAL ACTIONS (report what you already did):
+- "explore" with direction and steps (1-5) — you already walked and are reporting the result.
+- "interact" — you completed a multi-step interaction (NPC, sign, PC, etc.) via tools above.
+- "wait" with frames — nothing actionable right now, wait and re-evaluate.
+
+DECISION GUIDE:
+- Operator says "go to [place]" → navigate_route with dest_map_name
+- Target visible on ASCII map → navigate_to with x,y
+- Need to leave current building → find_exit
+- Need healing → find_pokecenter or heal
+- Need to pick up item on map → collect_item
+- Explored/interacted via press_and_read → explore or interact
+
 Always include "reasoning" explaining what you observed and why you chose this action.
