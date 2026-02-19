@@ -676,5 +676,111 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
             )
         return result
 
+    # ----------------------------------------------------------
+    # press_and_read — composite tool: press key + wait + read screen
+    # ----------------------------------------------------------
+    @server.tool()
+    async def press_and_read(
+        key: str,
+        frames: int = 16,
+        wait: int = 60,
+    ) -> dict:
+        """
+        Press a button, wait for the game to respond, then read screen text.
+
+        Combines press_key + run_frames + decode_screen_text into a single call.
+        Use this as your PRIMARY interaction tool — it's 3x more efficient than
+        calling the three tools separately.
+
+        Args:
+            key: Button to press (a, b, up, down, left, right, start, select)
+            frames: Frames to hold the button (default 16 — enough for movement/interaction)
+            wait: Frames to wait after releasing for animations/text to render (default 60)
+
+        Returns:
+            Screen text after the action, plus confirmation of what was pressed
+        """
+        if err := _require_rom(emu_thread):
+            return err
+
+        valid_keys = {"a", "b", "start", "select", "up", "down", "left", "right"}
+        k = key.lower()
+        if k not in valid_keys:
+            return {"error": f"Invalid key: {key}. Valid: {', '.join(sorted(valid_keys))}"}
+
+        frames = max(1, min(frames, 600))
+        wait = max(0, min(wait, 600))
+
+        # Press the key
+        emu_thread.send_command(CommandType.PRESS_KEY, {"key": k, "frames": frames})
+
+        # Wait for animations/text
+        if wait > 0:
+            for _ in range(wait):
+                emu_thread.send_command(CommandType.STEP_FRAME)
+
+        # Read screen text
+        total = 20 * 18
+        all_bytes = _read_bytes(emu_thread, WRAM_TILE_MAP, total)
+        rows = []
+        for y in range(18):
+            row_start = y * 20
+            row_tiles = all_bytes[row_start:row_start + 20]
+            row_text = "".join(_decode_tile(t) for t in row_tiles)
+            rows.append(row_text)
+        text_lines = _extract_text_lines(rows)
+
+        return {
+            "key": k,
+            "frames": frames,
+            "wait": wait,
+            "text_lines": text_lines,
+            "rows": rows,
+        }
+
+    # ----------------------------------------------------------
+    # wait_and_read — composite tool: wait + read screen
+    # ----------------------------------------------------------
+    @server.tool()
+    async def wait_and_read(
+        wait: int = 60,
+    ) -> dict:
+        """
+        Wait for animations/dialog to render, then read screen text.
+
+        Use this after an action when you need to wait for the game to update
+        without pressing any button. Good for: waiting for dialog to finish
+        printing, menu animations, or battle animations.
+
+        Args:
+            wait: Frames to wait (default 60, ~1 second)
+
+        Returns:
+            Screen text after waiting
+        """
+        if err := _require_rom(emu_thread):
+            return err
+
+        wait = max(1, min(wait, 3600))
+
+        for _ in range(wait):
+            emu_thread.send_command(CommandType.STEP_FRAME)
+
+        # Read screen text
+        total = 20 * 18
+        all_bytes = _read_bytes(emu_thread, WRAM_TILE_MAP, total)
+        rows = []
+        for y in range(18):
+            row_start = y * 20
+            row_tiles = all_bytes[row_start:row_start + 20]
+            row_text = "".join(_decode_tile(t) for t in row_tiles)
+            rows.append(row_text)
+        text_lines = _extract_text_lines(rows)
+
+        return {
+            "text_lines": text_lines,
+            "rows": rows,
+        }
+
     logger.info("Pokemon Yellow plugin: registered decode_screen_text, "
-                "read_screen_tiles, render_ascii_map")
+                "read_screen_tiles, render_ascii_map, press_and_read, wait_and_read")
