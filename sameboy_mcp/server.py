@@ -46,6 +46,7 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger("sameboy-mcp")
+logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.WARNING)
 
 
 def create_server(
