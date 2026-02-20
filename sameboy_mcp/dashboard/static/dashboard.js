@@ -52,10 +52,11 @@
   const promptInput = document.getElementById("prompt-input");
   const promptSend = document.getElementById("prompt-send");
   const frameIndicator = document.getElementById("frame-indicator");
+  const screenTextSlot = document.getElementById("screen-text-slot");
 
   // Canvas setup
-  canvas.width = 320;
-  canvas.height = 288;
+  canvas.width = 480;
+  canvas.height = 432;
   ctx.imageSmoothingEnabled = false;
 
   // ── WebSocket ───────────────────────────────────
@@ -161,7 +162,6 @@
         break;
       case "agent_actions":
         if (msg.data.actions) updateAgentActions(msg.data.actions);
-        // ignore trigger events ({"trigger": "..."}) — those are for the agent
         break;
     }
   }
@@ -180,7 +180,6 @@
     if (data.status) {
       updateEmulatorStatus(data.status, data.activity, data.current_state);
     }
-    // Use plugin game_state from snapshot when no recent agent state
     if (data.game_state) {
       const agentStale = (performance.now() - lastAgentStateTime) > 5000;
       if (agentStale || lastAgentStateTime === 0) {
@@ -190,44 +189,61 @@
     }
   }
 
+  // ── Registers (compact horizontal bar) ──────────
+
   function updateRegisters(regs) {
     const pairs = [
       ["AF", regs.AF], ["BC", regs.BC], ["DE", regs.DE],
       ["HL", regs.HL], ["SP", regs.SP], ["PC", regs.PC],
     ];
 
-    let html = '<div class="register-grid">';
+    let html = '';
     for (const [name, value] of pairs) {
       const hex = value.toString(16).toUpperCase().padStart(4, "0");
       const changed = prevRegisters[name] !== undefined && prevRegisters[name] !== value;
-      html += `<div class="register-row">
-        <span class="reg-name">${name}</span>
-        <span class="reg-value${changed ? " changed" : ""}">${hex}</span>
-      </div>`;
+      html += `<div class="rbar-reg"><span class="reg-name">${name}</span><span class="reg-value${changed ? " changed" : ""}">${hex}</span></div>`;
     }
-    html += "</div>";
 
-    // Flags
     if (regs.flags) {
-      html += '<div class="flags-row">';
+      html += '<div class="rbar-sep"></div>';
       for (const [flag, val] of Object.entries(regs.flags)) {
-        html += `<span class="flag">
-          <span class="flag-name">${flag}</span>
-          <span class="flag-val ${val ? "set" : "clear"}">${val ? "1" : "0"}</span>
-        </span>`;
+        html += `<span class="flag"><span class="flag-name">${flag}</span><span class="flag-val ${val ? "set" : "clear"}">${val ? "1" : "0"}</span></span>`;
       }
-      html += "</div>";
     }
 
     registersEl.innerHTML = html;
     prevRegisters = { AF: regs.AF, BC: regs.BC, DE: regs.DE, HL: regs.HL, SP: regs.SP, PC: regs.PC };
   }
 
+  // Classify Z80/GB mnemonics into semantic groups for color-coding
+  const MNEMONIC_CLASSES = {
+    // Flow control — jumps, calls, returns
+    JP: "flow", JR: "flow", CALL: "flow", RET: "flow", RETI: "flow", RST: "flow",
+    // Load / store
+    LD: "load", LDH: "load", LDI: "load", LDD: "load", PUSH: "load", POP: "load",
+    // Arithmetic
+    ADD: "arith", ADC: "arith", SUB: "arith", SBC: "arith",
+    INC: "arith", DEC: "arith", DAA: "arith", CPL: "arith", SCF: "arith", CCF: "arith",
+    // Logic / comparison
+    AND: "logic", OR: "logic", XOR: "logic", CP: "logic",
+    BIT: "logic", SET: "logic", RES: "logic",
+    // Shift / rotate
+    RL: "shift", RLC: "shift", RR: "shift", RRC: "shift",
+    RLA: "shift", RLCA: "shift", RRA: "shift", RRCA: "shift",
+    SLA: "shift", SRA: "shift", SRL: "shift", SWAP: "shift",
+    // System / misc
+    NOP: "sys", HALT: "sys", STOP: "sys", DI: "sys", EI: "sys", CB: "sys",
+  };
+
+  function classifyMnemonic(mnemonic) {
+    return MNEMONIC_CLASSES[mnemonic.toUpperCase()] || "";
+  }
+
   function updateDisassembly(text, pc) {
     const lines = text.split("\n").filter(l => l.trim());
     let html = "";
+    let lineIdx = 0;
     for (const line of lines) {
-      // Parse "ADDR: MNEMONIC OPERANDS" format
       const match = line.match(/^\s*([0-9A-Fa-f]{1,4}):\s+(.+)/);
       if (match) {
         const addr = match[1].toUpperCase().padStart(4, "0");
@@ -237,29 +253,35 @@
         const operands = parts.slice(1).join(" ");
         const addrNum = parseInt(addr, 16);
         const isCurrent = pc !== undefined && addrNum === pc;
+        const typeClass = classifyMnemonic(mnemonic);
+        const zebra = lineIdx % 2 === 1 ? " zebra" : "";
 
-        html += `<div class="disasm-line${isCurrent ? " current" : ""}">
+        html += `<div class="disasm-line${isCurrent ? " current" : ""}${zebra}">
           <span class="disasm-addr">${addr}</span>
-          <span class="disasm-mnemonic">${esc(mnemonic)}</span>
+          <span class="disasm-mnemonic${typeClass ? ` m-${typeClass}` : ""}">${esc(mnemonic)}</span>
           <span class="disasm-operands">${esc(operands)}</span>
         </div>`;
+        lineIdx++;
       } else {
         html += `<div class="disasm-line"><span class="disasm-operands">${esc(line)}</span></div>`;
       }
     }
     disasmEl.innerHTML = html;
+
+    // Update instruction count badge
+    const countEl = document.getElementById("disasm-count");
+    if (countEl) countEl.textContent = `${lineIdx}`;
   }
 
   function updateEmulatorStatus(status, activity, currentState) {
-    // Show "Active"/"Idle" instead of raw "PAUSED" when emulator is paused between commands
-    let displayState = status.state || "—";
+    let displayState = status.state || "\u2014";
     if (displayState === "PAUSED" && activity) {
       displayState = activity === "active" ? "Active" : "Idle";
     }
 
     const items = [
       ["State", displayState],
-      ["ROM", status.rom_title || "—"],
+      ["ROM", status.rom_title || "\u2014"],
       ["Frame", frameCount.toLocaleString()],
     ];
     if (currentState) {
@@ -284,7 +306,7 @@
     if (data.player_x != null) items.push(["Pos", `(${data.player_x}, ${data.player_y})`]);
     if (data.party_count != null) items.push(["Party", data.party_count]);
     if (data.badge_count != null) items.push(["Badges", `${data.badge_count}/8`]);
-    if (data.money != null) items.push(["Money", `¥${data.money.toLocaleString()}`]);
+    if (data.money != null) items.push(["Money", `\u00A5${data.money.toLocaleString()}`]);
 
     updateStateGrid("game-status", items);
   }
@@ -302,7 +324,6 @@
   function updateStateGrid(sectionId, items) {
     let section = document.getElementById(sectionId);
     if (!section) {
-      // Create section in state panel
       section = document.createElement("div");
       section.id = sectionId;
       section.className = "state-section";
@@ -390,6 +411,18 @@
     container.innerHTML = "";
     for (const panel of panels) {
       registeredPanels[panel.id] = panel;
+
+      // Route screen_text panels to the dedicated slot
+      if (panel.type === "screen_text" && screenTextSlot) {
+        screenTextSlot.style.display = "";
+        const header = screenTextSlot.querySelector(".panel-header");
+        if (header) {
+          header.innerHTML = `<span class="indicator active"></span>${esc(panel.title || "Screen Text")}`;
+        }
+        registeredPanels[panel.id]._slotEl = screenTextSlot;
+        continue;
+      }
+
       const el = document.createElement("div");
       el.id = `panel-${panel.id}`;
       el.className = `panel panel-${panel.type || "generic"}`;
@@ -407,7 +440,10 @@
     const id = data.panel_id;
     const panelType = data.type || "";
     const content = data.content || {};
-    const el = document.getElementById(`panel-${id}`);
+
+    // Check for slot-routed panels first
+    const panelInfo = registeredPanels[id];
+    const el = (panelInfo && panelInfo._slotEl) || document.getElementById(`panel-${id}`);
     if (!el) return;
 
     const body = el.querySelector(".panel-body");
@@ -445,12 +481,10 @@
     const lines = ascii.split("\n");
     let html = "";
     for (const line of lines) {
-      // Header lines (column numbers) start with spaces
       if (line.match(/^\s+\d/)) {
         html += `<div class="map-row"><span class="mc-header">${esc(line)}</span></div>`;
         continue;
       }
-      // Map rows: "NN:CHARS"
       const match = line.match(/^(\s*\d+:)(.*)/);
       if (match) {
         const label = match[1];
@@ -469,7 +503,6 @@
         html += `<div class="map-row">${esc(line)}</div>`;
       }
     }
-    // Add metadata header
     const mapName = data.map_name || "";
     const player = data.player || {};
     const meta = mapName ? `${esc(mapName)} (${player.x ?? "?"},${player.y ?? "?"})` : "";
@@ -505,7 +538,6 @@
     const section = document.getElementById("agent-actions-section");
     if (!container || !section) return;
 
-    // Group by action.group
     const groups = {};
     for (const action of actions) {
       const group = action.group || "default";
@@ -526,7 +558,6 @@
     container.innerHTML = html;
     section.style.display = "";
 
-    // Bind click handlers
     container.querySelectorAll("[data-action-id]").forEach((btn) => {
       btn.addEventListener("mousedown", () => {
         const id = btn.dataset.actionId;
@@ -545,7 +576,6 @@
     if (!text) return;
     send({ type: "inject_prompt", text });
 
-    // Show locally
     addLlmMessage({ role: "injection", content: text });
     promptInput.value = "";
   }
@@ -570,7 +600,6 @@
     });
   });
 
-  // Keyboard shortcuts (when not focused on input)
   document.addEventListener("keydown", (e) => {
     if (e.target === promptInput) return;
 
@@ -582,7 +611,6 @@
     if (gbKey) {
       e.preventDefault();
       send({ type: "press_key", key: gbKey });
-      // Highlight button
       const btn = document.querySelector(`[data-key="${gbKey}"]`);
       if (btn) {
         btn.classList.add("pressed");
