@@ -518,7 +518,7 @@ class EmulatorThread:
                 # Dashboard
                 case CommandType.DASHBOARD_SNAPSHOT:
                     regs = emu.get_registers()
-                    disasm = emu.disassemble(regs["PC"], 10)
+                    disasm = emu.disassemble(regs["PC"], 50)
                     status = emu.get_status()
                     activity = "active" if (emu.frame_count - self._last_command_frame) < 30 else "idle"
                     return {

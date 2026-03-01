@@ -21,6 +21,13 @@
   </div>
 </div>
 
+<!-- CPU Register Bar (compact horizontal) -->
+<div class="register-bar">
+  <span class="indicator active"></span>
+  <span class="rbar-label">CPU</span>
+  <div class="register-bar-content" id="registers-body"></div>
+</div>
+
 <!-- Main Grid -->
 <div class="dashboard">
 
@@ -32,56 +39,7 @@
     </div>
     <div class="panel-body">
       <canvas id="game-canvas"></canvas>
-      <span class="fps-counter" id="fps-counter">— fps</span>
-    </div>
-  </div>
-
-  <!-- Controls -->
-  <div class="panel panel-controls">
-    <div class="panel-header">
-      <span class="indicator"></span>
-      Controls
-    </div>
-    <div class="panel-body">
-      <div class="dpad-grid">
-        <div></div>
-        <button class="btn-key" data-key="up">&uarr;</button>
-        <div></div>
-        <button class="btn-key" data-key="left">&larr;</button>
-        <div></div>
-        <button class="btn-key" data-key="right">&rarr;</button>
-        <div></div>
-        <button class="btn-key" data-key="down">&darr;</button>
-        <div></div>
-      </div>
-      <div class="action-buttons">
-        <button class="btn-key" data-key="a">A</button>
-        <button class="btn-key" data-key="b">B</button>
-        <button class="btn-key" data-key="start">Start</button>
-        <button class="btn-key" data-key="select">Sel</button>
-      </div>
-      <div class="agent-actions-section" id="agent-actions-section" style="display:none">
-        <div class="agent-actions-label">Agent Actions</div>
-        <div id="agent-actions-container"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Registers + Status -->
-  <div class="panel panel-registers">
-    <div class="panel-header">
-      <span class="indicator active"></span>
-      CPU Registers
-    </div>
-    <div class="panel-body" id="registers-body">
-      <div class="register-grid">
-        <div class="register-row"><span class="reg-name">AF</span><span class="reg-value">----</span></div>
-        <div class="register-row"><span class="reg-name">BC</span><span class="reg-value">----</span></div>
-        <div class="register-row"><span class="reg-name">DE</span><span class="reg-value">----</span></div>
-        <div class="register-row"><span class="reg-name">HL</span><span class="reg-value">----</span></div>
-        <div class="register-row"><span class="reg-name">SP</span><span class="reg-value">----</span></div>
-        <div class="register-row"><span class="reg-name">PC</span><span class="reg-value">----</span></div>
-      </div>
+      <span class="fps-counter" id="fps-counter">&mdash; fps</span>
     </div>
   </div>
 
@@ -90,16 +48,23 @@
     <div class="panel-header">
       <span class="indicator active"></span>
       Disassembly @ PC
+      <span class="disasm-count" id="disasm-count"></span>
     </div>
     <div class="panel-body" id="disasm-body">
       <div class="disasm-line"><span class="disasm-operands">Waiting for data&hellip;</span></div>
     </div>
   </div>
 
-  <!-- Plugin Panels (dynamically populated) -->
-  <div class="plugin-panels" id="plugin-panels"></div>
+  <!-- Screen Text Slot (populated by plugin system) -->
+  <div class="panel panel-screen-text" id="screen-text-slot" style="display:none">
+    <div class="panel-header">
+      <span class="indicator active"></span>
+      Screen Text
+    </div>
+    <div class="panel-body">Waiting for data&hellip;</div>
+  </div>
 
-  <!-- Game State -->
+  <!-- Game State (now in top-right, row 2) -->
   <div class="panel panel-state">
     <div class="panel-header">
       <span class="indicator"></span>
@@ -114,6 +79,42 @@
       <div id="game-status" class="state-section"></div>
     </div>
   </div>
+
+  <!-- Controls -->
+  <div class="panel panel-controls">
+    <div class="panel-header">
+      <span class="indicator"></span>
+      Controls
+    </div>
+    <div class="panel-body">
+      <div class="controls-row">
+        <div class="dpad-grid">
+          <div></div>
+          <button class="btn-key" data-key="up">&uarr;</button>
+          <div></div>
+          <button class="btn-key" data-key="left">&larr;</button>
+          <div></div>
+          <button class="btn-key" data-key="right">&rarr;</button>
+          <div></div>
+          <button class="btn-key" data-key="down">&darr;</button>
+          <div></div>
+        </div>
+        <div class="action-buttons">
+          <button class="btn-key" data-key="a">A</button>
+          <button class="btn-key" data-key="b">B</button>
+          <button class="btn-key" data-key="start">Start</button>
+          <button class="btn-key" data-key="select">Sel</button>
+        </div>
+      </div>
+      <div class="agent-actions-section" id="agent-actions-section" style="display:none">
+        <div class="agent-actions-label">Agent Actions</div>
+        <div id="agent-actions-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Plugin Panels (dynamically populated - ASCII Map, etc.) -->
+  <div class="plugin-panels" id="plugin-panels"></div>
 
   <!-- LLM Log -->
   <div class="panel panel-llm">

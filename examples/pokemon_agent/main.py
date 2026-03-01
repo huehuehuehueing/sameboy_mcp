@@ -714,6 +714,16 @@ class PokemonAgent:
                 state_data["llm_steps"] = ct.step_count
             self._event_sink.emit_state(state_data)
 
+            # Auto-push screen text to the dashboard panel every cycle
+            if state.screen_text:
+                self._event_sink.emit_panel_data(
+                    "screen_text",
+                    {
+                        "text_lines": state.screen_text.lines if state.screen_text.has_text else [],
+                    },
+                    "screen_text",
+                )
+
         # Detect map change and trigger area analysis
         # Require map data to be loaded (width/height > 0) — during OakSpeech,
         # map_id may change to 38 before EnterMap loads the actual map data
