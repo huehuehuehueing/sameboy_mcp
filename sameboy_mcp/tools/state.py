@@ -164,7 +164,7 @@ def register_state_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
             import os
             try:
                 # Ensure directory exists
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
                 with open(file_path, "wb") as f:
                     f.write(state_info["data"])
                 return {

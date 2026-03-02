@@ -191,27 +191,34 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
         if frames > 600:
             frames = 600
 
-        # Press all keys
-        for key in keys:
-            result = emu_thread.send_command(CommandType.SET_KEY, {
-                "key": key,
-                "pressed": True
-            })
-            if result.get("error"):
-                return {"error": result["error"]}
+        pressed_keys: list[str] = []
+        release_errors: list[str] = []
 
-        # Run frames
-        for _ in range(frames):
-            result = emu_thread.send_command(CommandType.STEP_FRAME)
-            if result.get("error"):
-                return {"error": result["error"]}
+        try:
+            for key in keys:
+                result = emu_thread.send_command(CommandType.SET_KEY, {
+                    "key": key,
+                    "pressed": True
+                })
+                if result.get("error"):
+                    return {"error": result["error"]}
+                pressed_keys.append(key)
 
-        # Release all keys
-        for key in keys:
-            emu_thread.send_command(CommandType.SET_KEY, {
-                "key": key,
-                "pressed": False
-            })
+            for _ in range(frames):
+                result = emu_thread.send_command(CommandType.STEP_FRAME)
+                if result.get("error"):
+                    return {"error": result["error"]}
+        finally:
+            for key in reversed(pressed_keys):
+                result = emu_thread.send_command(CommandType.SET_KEY, {
+                    "key": key,
+                    "pressed": False
+                })
+                if result.get("error"):
+                    release_errors.append(f"{key}: {result['error']}")
+
+        if release_errors:
+            return {"error": "Failed to release keys: " + "; ".join(release_errors)}
 
         return {
             "success": True,

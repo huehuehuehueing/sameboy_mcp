@@ -111,6 +111,7 @@ class SameBoyEmulator:
         # ROM info
         self._rom_loaded = False
         self._rom_title = ""
+        self._boot_rom_loaded = False
 
         # Live display
         self._live_display: Optional["LiveDisplay"] = None
@@ -156,10 +157,10 @@ class SameBoyEmulator:
         # Vblank callback
         @ffi.callback("void(GB_gameboy_t*, GB_vblank_type_t)")
         def vblank_cb(gb, vblank_type):
-            self._frame_count += 1
             # vblank_type 0 = normal frame, skip others to avoid duplicate frames
             if vblank_type != 0:
                 return
+            self._frame_count += 1
             # Update live display if enabled
             if self._live_display and self._live_display.is_running:
                 pixels = self.get_screen_pixels()
@@ -290,7 +291,8 @@ class SameBoyEmulator:
             title_buf = ffi.new("char[17]")
             self.lib.GB_get_rom_title(self.gb, title_buf)
             self._rom_title = ffi.string(title_buf).decode("utf-8", errors="replace").strip()
-            self._init_post_boot_state()
+            if not self._boot_rom_loaded:
+                self._init_post_boot_state()
             return True
         return False
 
@@ -299,17 +301,21 @@ class SameBoyEmulator:
         buf = ffi.from_buffer("uint8_t[]", data)
         self.lib.GB_load_rom_from_buffer(self.gb, buf, len(data))
         self._rom_loaded = True
-        self._init_post_boot_state()
+        if not self._boot_rom_loaded:
+            self._init_post_boot_state()
 
     def load_boot_rom(self, path: str) -> bool:
         """Load a boot ROM file."""
         result = self.lib.GB_load_boot_rom(self.gb, path.encode("utf-8"))
-        return result == 0
+        self._boot_rom_loaded = (result == 0)
+        return self._boot_rom_loaded
 
     def reset(self) -> None:
         """Reset the emulator."""
         self.lib.GB_reset(self.gb)
         self._frame_count = 0
+        if self._rom_loaded and not self._boot_rom_loaded:
+            self._init_post_boot_state()
 
     # ============ Execution Control ============
 
