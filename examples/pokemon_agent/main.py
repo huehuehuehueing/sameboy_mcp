@@ -1005,14 +1005,11 @@ class PokemonAgent:
             return True
 
         # ── Early-game autopilot (no LLM needed) ─────────────────────
-        # When party_count=0, badges=0, game_timer started: the player
-        # just woke up in Player House 2F.  Handle the deterministic
-        # early-game sequence with coded routines instead of LLM.
+        # party_count=0 means the player hasn't received their starter
+        # yet — handle with coded routines (no LLM needed).
         if (
             self._autopilot
             and state.party_count == 0
-            and state.badge_count == 0
-            and state.game_timer_counting
             and state.mode in (GameMode.OVERWORLD, GameMode.DIALOG, GameMode.MENU)
         ):
             handled = await self._handle_early_game(state)
