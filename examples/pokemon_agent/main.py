@@ -647,6 +647,109 @@ class PokemonAgent:
             else:
                 await self._routines.wait_frames(30)
 
+    async def _handle_early_game(self, state) -> bool:
+        """Handle the deterministic early-game sequence (pre-starter Pokemon).
+
+        Returns True if this method handled the step (caller should return).
+        Returns False to fall through to LLM-based handling.
+
+        Pokemon Yellow early game sequence:
+        1. Wake up in Player House 2F (map 38) at (3,6)
+        2. Go downstairs to 1F (map 37) via stairs at (7,1)
+        3. Exit house to Pallet Town (map 0) via door at (2,7)/(3,7)
+        4. Walk north → Oak intercepts, scripted walk to Lab
+        5. Get Pikachu in Oak's Lab (map 39) — dialog-driven
+        6. Rival battle (handled by BATTLE mode, not here)
+        """
+        pos = f"({state.player_x},{state.player_y})"
+
+        # ── Burn through ignore_input quickly ───────────────
+        if state.ignore_input > 5:
+            # Check for text prompts that need A press
+            has_prompt = any(
+                "\u25bc" in l
+                for l in (state.screen_text.lines if state.screen_text else [])
+            )
+            if has_prompt:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos} — early-game ▼ prompt, pressing A"
+                )
+                await self._routines.press("a", 4)
+            elif state.joypad_sim != 0:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos} — scripted movement, waiting"
+                )
+            else:
+                self._log_action(
+                    f"[{self._step_count}] {state.map_name} {pos} — ignore_input={state.ignore_input}, burning frames"
+                )
+            # Run extra frames to burn through the counter faster
+            await self._routines.wait_frames(120)
+            return True
+
+        # ── Dialog/Menu: press A to advance ─────────────────
+        if state.mode in (GameMode.DIALOG, GameMode.MENU):
+            screen_preview = ""
+            if state.screen_text and state.screen_text.has_text:
+                text_lines = [l for l in state.screen_text.lines if l.strip()]
+                screen_preview = " | ".join(text_lines)[:80]
+            self._log_action(
+                f"[{self._step_count}] {state.map_name} {pos} — early-game dialog, pressing A"
+                f"  [screen: {screen_preview}]"
+            )
+            await self._routines.press("a", 4)
+            await self._routines.wait_frames(30)
+            return True
+
+        # ── OVERWORLD navigation ────────────────────────────
+        if state.mode != GameMode.OVERWORLD:
+            return False  # Let other handlers deal with it
+
+        # Player House 2F (map 38) → go to stairs at (7,1) and go down
+        if state.map_id == 38:
+            self._log_action(
+                f"[{self._step_count}] Player House 2F {pos} → navigating to stairs (7,1)"
+            )
+            reached = await self._routines.navigate_to(7, 1, max_steps=30)
+            if reached:
+                self._log_action(f"  at stairs, stepping up to descend")
+                await self._routines.press("up", 8)
+                await self._routines.wait_frames(60)
+            return True
+
+        # Player House 1F (map 37) → exit through door at (2,7)/(3,7)
+        if state.map_id == 37:
+            self._log_action(
+                f"[{self._step_count}] Player House 1F {pos} → navigating to exit"
+            )
+            reached = await self._routines.navigate_to(3, 7, max_steps=30)
+            if reached:
+                self._log_action(f"  at door, stepping down to exit")
+                await self._routines.press("down", 8)
+                await self._routines.wait_frames(60)
+            return True
+
+        # Pallet Town (map 0) → walk north to trigger Oak event
+        if state.map_id == 0:
+            self._log_action(
+                f"[{self._step_count}] Pallet Town {pos} — walking north to trigger Oak"
+            )
+            # Walk north — Oak will intercept before Route 1
+            await self._routines.walk("up", 3)
+            return True
+
+        # Oak's Lab (map 39) → just advance dialog (press A)
+        if state.map_id == 39:
+            self._log_action(
+                f"[{self._step_count}] Oak's Lab {pos} — pressing A to advance"
+            )
+            await self._routines.press("a", 4)
+            await self._routines.wait_frames(30)
+            return True
+
+        # Unknown early-game map — fall through to LLM
+        return False
+
     async def _handle_dashboard_action(self, action_id: str, state) -> bool:
         """Handle an action triggered from the dashboard. Returns True if handled."""
         pos = f"({state.player_x},{state.player_y})"
@@ -885,6 +988,22 @@ class PokemonAgent:
 
             await self._routines.wait_frames(self.config.cycle_frames)
             return True
+
+        # ── Early-game autopilot (no LLM needed) ─────────────────────
+        # When party_count=0, badges=0, game_timer started: the player
+        # just woke up in Player House 2F.  Handle the deterministic
+        # early-game sequence with coded routines instead of LLM.
+        if (
+            self._autopilot
+            and state.party_count == 0
+            and state.badge_count == 0
+            and state.game_timer_counting
+            and state.mode in (GameMode.OVERWORLD, GameMode.DIALOG, GameMode.MENU)
+        ):
+            handled = await self._handle_early_game(state)
+            if handled:
+                await self._routines.wait_frames(self.config.cycle_frames)
+                return True
 
         # ── LLM-requiring modes ──────────────────────────────────────
         # BATTLE, OVERWORLD, and post-intro DIALOG/MENU need the LLM.
