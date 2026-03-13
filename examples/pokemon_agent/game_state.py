@@ -430,6 +430,31 @@ class GameStateReader:
             result = result * 100 + ((b >> 4) * 10) + (b & 0x0F)
         return result
 
+    @staticmethod
+    def _decode_bcd(data: list[int]) -> int:
+        """Decode BCD-encoded bytes (already read) into an integer."""
+        result = 0
+        for b in data:
+            result = result * 100 + ((b >> 4) * 10) + (b & 0x0F)
+        return result
+
+    async def _read_range(self, address: int, length: int) -> list[int]:
+        """Read a contiguous memory range. Returns list of int values."""
+        result = await self._call("read_memory", {
+            "address": address,
+            "length": length,
+        })
+        if isinstance(result, dict) and "bytes" in result:
+            data = result["bytes"]
+        elif isinstance(result, dict) and "error" in result:
+            data = [0] * length
+        else:
+            data = [0] * length
+        # Pad to expected length if short
+        if len(data) < length:
+            data.extend([0] * (length - len(data)))
+        return data
+
     async def read_event_flags(self) -> dict[str, bool]:
         """Read early game event flags from memory.
 
@@ -821,57 +846,80 @@ class GameStateReader:
         """Read complete game state from memory."""
         self._ensure_data()
 
-        # Read core state bytes in bulk where possible
+        # ── Batch memory reads ─────────────────────────────────
+        # Group nearby addresses into contiguous range reads to reduce
+        # MCP round-trips.  Each cluster is one read_memory call.
+
+        # Cluster 1: 0xCC26..0xCC3F (26 bytes)
+        #   menu_cursor(0xCC26), menu_max(0xCC28), joypad_sim(0xCC3F)
+        _cc = await self._read_range(0xCC26, 0xCC3F - 0xCC26 + 1)
+        menu_cursor  = _cc[mem.WRAM_CURRENT_MENU_ITEM - 0xCC26]
+        menu_max     = _cc[mem.WRAM_MAX_MENU_ITEM - 0xCC26]
+        joypad_sim   = _cc[mem.WRAM_SIM_JOYPAD_STATES_INDEX - 0xCC26]
+
+        # Cluster 2: 0xCF4A..0xCF94 (75 bytes)
+        #   letters_entered(0xCF4A), naming_screen(0xCF91), text_box_id(0xCF94)
+        _cf = await self._read_range(0xCF4A, 0xCF94 - 0xCF4A + 1)
+        letters_entered = _cf[mem.WRAM_NUM_LETTERS_ENTERED - 0xCF4A]
+        naming_screen   = _cf[mem.WRAM_NAMING_SCREEN_TYPE - 0xCF4A]
+        text_box_id     = _cf[mem.WRAM_TEXT_BOX_ID - 0xCF4A]
+
+        # Cluster 3: 0xCFC3..0xCFC5 (3 bytes)
+        #   font_loaded(0xCFC3), walk_counter(0xCFC4), tile_ahead(0xCFC5)
+        _cfc = await self._read_range(0xCFC3, 3)
+        font_loaded_byte = _cfc[0]
+        font_loaded      = bool(font_loaded_byte & 0x01)
+        walk_counter     = _cfc[1]
+        tile_ahead       = _cfc[2]
+
+        # Cluster 4: 0xD056 (1 byte) — isolated
         in_battle = await self._read_byte(mem.WRAM_IS_IN_BATTLE)
-        map_id = await self._read_byte(mem.WRAM_CUR_MAP)
-        player_x = await self._read_byte(mem.WRAM_X_COORD)
-        player_y = await self._read_byte(mem.WRAM_Y_COORD)
+
+        # Cluster 5: 0xD119..0xD162 (74 bytes)
+        #   ignore_input(0xD139), player_name(0xD157..0xD161), party_count(0xD162)
+        _d1 = await self._read_range(0xD119, 0xD162 - 0xD119 + 1)
+        ignore_input = _d1[mem.WRAM_IGNORE_INPUT_COUNTER - 0xD119]
+        p_bytes      = _d1[mem.WRAM_PLAYER_NAME - 0xD119 : mem.WRAM_PLAYER_NAME - 0xD119 + 11]
+        party_count  = _d1[mem.WRAM_PARTY_COUNT - 0xD119]
+
+        # Cluster 6: 0xD346..0xD361 (28 bytes)
+        #   money(0xD346,3), rival_name(0xD349,11), badges(0xD355),
+        #   map_id(0xD35D), player_y(0xD360), player_x(0xD361)
+        _d3 = await self._read_range(0xD346, 0xD361 - 0xD346 + 1)
+        money    = self._decode_bcd(_d3[mem.WRAM_MONEY - 0xD346 : mem.WRAM_MONEY - 0xD346 + 3])
+        r_bytes  = _d3[mem.WRAM_RIVAL_NAME - 0xD346 : mem.WRAM_RIVAL_NAME - 0xD346 + 11]
+        badges   = _d3[mem.WRAM_BADGES - 0xD346]
+        map_id   = _d3[mem.WRAM_CUR_MAP - 0xD346]
+        player_y = _d3[mem.WRAM_Y_COORD - 0xD346]
+        player_x = _d3[mem.WRAM_X_COORD - 0xD346]
+
+        # Cluster 7: 0xD529 (1 byte) — isolated
         facing_raw = await self._read_byte(mem.WRAM_PLAYER_DIRECTION)
-        walk_counter = await self._read_byte(mem.WRAM_WALK_COUNTER)
-        tile_ahead = await self._read_byte(mem.WRAM_TILE_IN_FRONT)
-        party_count = await self._read_byte(mem.WRAM_PARTY_COUNT)
-        badges = await self._read_byte(mem.WRAM_BADGES)
-        money = await self._read_bcd(mem.WRAM_MONEY, 3)
-        menu_cursor = await self._read_byte(mem.WRAM_CURRENT_MENU_ITEM)
-        menu_max = await self._read_byte(mem.WRAM_MAX_MENU_ITEM)
-        text_box_id = await self._read_byte(mem.WRAM_TEXT_BOX_ID)
-        ignore_input = await self._read_byte(mem.WRAM_IGNORE_INPUT_COUNTER)
-        pikachu = await self._read_byte(mem.WRAM_PIKACHU_HAPPINESS)
-        joy_pressed = await self._read_byte(mem.HRAM_JOY_PRESSED)
-        joy_held = await self._read_byte(mem.HRAM_JOY_HELD)
-        frame = await self._read_byte(mem.HRAM_FRAME_COUNTER)
 
-        # Read additional state for mode detection
-        naming_screen = await self._read_byte(mem.WRAM_NAMING_SCREEN_TYPE)
-        oak_speech = await self._read_byte(mem.WRAM_OAK_SPEECH_STATUS)
-        letters_entered = await self._read_byte(mem.WRAM_NUM_LETTERS_ENTERED)
-
-        # Read dialog state flags for more accurate detection
-        textbox_open = await self._read_byte(mem.WRAM_TEXTBOX_OPEN)
-        script_running = await self._read_byte(mem.WRAM_SCRIPT_RUNNING)
-        # Read the ACTUAL joypad simulation index from disassembly
-        # When non-zero, game is controlling player (cutscenes, intros)
-        joypad_sim = await self._read_byte(mem.WRAM_SIM_JOYPAD_STATES_INDEX)
-
-        # Read wStatusFlags5 — bit 5 (BIT_DISABLE_JOYPAD) is the definitive
-        # input-blocked flag.  Checked in engine/joypad.asm; when set, ALL
-        # button presses are discarded by DiscardButtonPresses.
-        status_flags5 = await self._read_byte(mem.WRAM_STATUS_FLAGS5)
-        joypad_disabled = bool(status_flags5 & 0x20)  # bit 5
-        font_loaded_byte = await self._read_byte(mem.WRAM_FONT_LOADED)
-        font_loaded = bool(font_loaded_byte & 0x01)
+        # Cluster 8: 0xD72D..0xD731 (5 bytes)
+        #   oak_speech(0xD72D), status_flags5(0xD72F),
+        #   script_running(0xD730), status_flags6(0xD731)
+        _d7 = await self._read_range(0xD72D, 0xD731 - 0xD72D + 1)
+        oak_speech      = _d7[mem.WRAM_OAK_SPEECH_STATUS - 0xD72D]
+        status_flags5   = _d7[mem.WRAM_STATUS_FLAGS5 - 0xD72D]
+        joypad_disabled = bool(status_flags5 & 0x20)   # bit 5
         scripted_movement = bool(status_flags5 & 0x80)  # bit 7 BIT_SCRIPTED_MOVEMENT_STATE
-
-        # Read wStatusFlags6 — bit 0 (BIT_GAME_TIMER_COUNTING) is set once
-        # by SpecialEnterMap after OakSpeech returns.  Never cleared.
-        status_flags6 = await self._read_byte(mem.WRAM_STATUS_FLAGS6)
+        script_running  = _d7[mem.WRAM_SCRIPT_RUNNING - 0xD72D]
+        status_flags6   = _d7[mem.WRAM_STATUS_FLAGS6 - 0xD72D]
         game_timer_counting = bool(status_flags6 & 0x01)
 
-        # Read player and rival name first bytes to detect post-OakSpeech state
-        player_raw = await self._read(mem.WRAM_PLAYER_NAME, 11)
-        rival_raw = await self._read(mem.WRAM_RIVAL_NAME, 11)
-        p_bytes = player_raw.get("bytes", []) if isinstance(player_raw, dict) else player_raw
-        r_bytes = rival_raw.get("bytes", []) if isinstance(rival_raw, dict) else rival_raw
+        # Remaining isolated reads
+        pikachu     = await self._read_byte(mem.WRAM_PIKACHU_HAPPINESS)
+        textbox_open = await self._read_byte(mem.WRAM_TEXTBOX_OPEN)
+
+        # HRAM cluster: 0xFFB3..0xFFD5 (35 bytes)
+        #   joy_pressed(0xFFB3), joy_held(0xFFB4), frame(0xFFD5)
+        _hram = await self._read_range(0xFFB3, 0xFFD5 - 0xFFB3 + 1)
+        joy_pressed = _hram[mem.HRAM_JOY_PRESSED - 0xFFB3]
+        joy_held    = _hram[mem.HRAM_JOY_HELD - 0xFFB3]
+        frame       = _hram[mem.HRAM_FRAME_COUNTER - 0xFFB3]
+
+        # Decode player/rival names from batched bytes
         p_name = mem.decode_text(p_bytes, max_len=11)
         r_name = mem.decode_text(r_bytes, max_len=11)
 
