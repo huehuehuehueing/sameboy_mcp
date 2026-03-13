@@ -738,19 +738,20 @@ class PokemonAgent:
                 await self._routines.wait_frames(60)
             return True
 
-        # Pallet Town (map 0) → navigate to tall grass to trigger Oak
+        # Pallet Town (map 0) → walk to y=0 to trigger Oak event
         if state.map_id == 0:
-            # Oak intercepts when player reaches tall grass near Route 1
-            # exit.  The grass corridor is at x=10-11, y=0-1.
-            # First move away from house door to avoid re-entering.
+            # Oak's script fires when wYCoord == 0 (north edge of map).
+            # Grass at block col 8 = movement x=16-17 is reachable.
             self._log_action(
-                f"[{self._step_count}] Pallet Town {pos} → heading to grass to trigger Oak"
+                f"[{self._step_count}] Pallet Town {pos} → heading north to trigger Oak"
             )
-            reached = await self._routines.navigate_to(10, 1)
+            reached = await self._routines.navigate_to(16, 0)
             if not reached:
-                # Fallback: try walking right then up
-                await self._routines.walk("right", 3)
-                await self._routines.walk("up", 5)
+                # Try the other grass corridor
+                reached = await self._routines.navigate_to(5, 0)
+            if not reached:
+                # Fallback: just walk north as far as possible
+                await self._routines.walk("up", 10)
             return True
 
         # Oak's Lab (map 39) → just advance dialog (press A)
