@@ -10,6 +10,7 @@ from typing import Any
 
 from . import memory_map as mem
 from .game_state import GameState, GameMode, Direction, GameStateReader, ScreenText
+from .pokebot_paths import get_waypoint_path
 from .pokemon_data import MAP_GRAPH, MAP_NAMES, MAP_NAME_TO_ID
 
 
@@ -1474,10 +1475,53 @@ class Routines:
         return await self.advance_text(max_presses=30)
 
     # ============================================================
+    # Waypoint-based Navigation
+    # ============================================================
+
+    async def _walk_waypoints(self, waypoint_path) -> bool:
+        """Walk a pre-computed waypoint path. Returns True if completed.
+
+        Walks each waypoint in sequence. If any walk() call fails (blocked),
+        returns False so the caller can fall back to BFS pathfinding.
+        """
+        points = waypoint_path.points
+        state = await self.read_state()
+        px, py = state.player_x, state.player_y
+        initial_map = state.map_id
+
+        for tx, ty in points:
+            if px == tx and py == ty:
+                continue  # Already at this waypoint
+
+            # Walk one axis at a time (X then Y)
+            dx = tx - px
+            if dx != 0:
+                direction = "right" if dx > 0 else "left"
+                if not await self.walk(direction, abs(dx)):
+                    return False
+                # Check for map change mid-walk (warp/border triggered)
+                s = await self.read_state()
+                if s.map_id != initial_map:
+                    return True  # Map changed — waypoint path did its job
+                px = s.player_x
+
+            dy = ty - py
+            if dy != 0:
+                direction = "down" if dy > 0 else "up"
+                if not await self.walk(direction, abs(dy)):
+                    return False
+                s = await self.read_state()
+                if s.map_id != initial_map:
+                    return True
+                py = s.player_y
+
+        return True
+
+    # ============================================================
     # Multi-Map Route Navigation
     # ============================================================
 
-    async def navigate_route(self, dest_map_id: int, max_depth: int = 30) -> bool:
+    async def navigate_route(self, dest_map_id: int, max_depth: int = 30, use_waypoints: bool = True) -> bool:
         """Execute a multi-map route to reach dest_map_id.
 
         Plans a route across map borders and warps, then executes each hop.
@@ -1530,6 +1574,23 @@ class Routines:
             if current_map == next_map_id:
                 print(f"  [nav-route] already on hop target, skipping")
                 continue
+
+            # Try waypoint shortcut before BFS pathfinding
+            if use_waypoints:
+                wp = get_waypoint_path(
+                    current_map, next_map_id,
+                    player_pos=(state.player_x, state.player_y),
+                )
+                if wp:
+                    print(f"  [nav-route] using waypoint path ({len(wp.points)} pts)")
+                    if await self._walk_waypoints(wp):
+                        new_state = await self.read_state()
+                        if new_state.map_id == next_map_id:
+                            self.invalidate_map_cache()
+                            self.set_arrival_warp(new_state.map_id, new_state.player_x, new_state.player_y)
+                            print(f"  [nav-route] waypoint hop success -> map {new_state.map_id}")
+                            continue  # Success, next hop
+                    print(f"  [nav-route] waypoint path failed, falling back to BFS")
 
             if conn_type.startswith("border_"):
                 direction = conn_type.replace("border_", "")
