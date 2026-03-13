@@ -1317,16 +1317,35 @@ async def main():
         print(f"Error: ROM not found: {config.rom_path}")
         sys.exit(1)
 
-    # Set up dashboard event sink if requested
+    # Set up dashboard event sink
+    # Auto-derive WebSocket URL from --server-url when --dashboard-url is not given
+    dashboard_url = args.dashboard_url
+    if not dashboard_url and args.server_url:
+        # server_url is like http://127.0.0.1:8765/sse — derive ws URL
+        base = args.server_url.rsplit("/", 1)[0]  # http://127.0.0.1:8765
+        dashboard_url = base + "/dashboard/ws"
+    if dashboard_url:
+        # Normalize: http:// → ws://, https:// → wss://
+        if dashboard_url.startswith("http://"):
+            dashboard_url = "ws://" + dashboard_url[7:]
+        elif dashboard_url.startswith("https://"):
+            dashboard_url = "wss://" + dashboard_url[8:]
+        # Ensure path ends with /dashboard/ws
+        if not dashboard_url.endswith("/ws"):
+            dashboard_url = dashboard_url.rstrip("/")
+            if not dashboard_url.endswith("/dashboard"):
+                dashboard_url += "/dashboard"
+            dashboard_url += "/ws"
+
     event_sink = None
-    if args.dashboard_url:
+    if dashboard_url:
         try:
             from sameboy_mcp.dashboard.events import RemoteDashboardEventSink
-            event_sink = RemoteDashboardEventSink(args.dashboard_url)
+            event_sink = RemoteDashboardEventSink(dashboard_url)
             if await event_sink.connect():
-                print(f"Dashboard: connected to {args.dashboard_url}")
+                print(f"Dashboard: connected to {dashboard_url}")
             else:
-                print(f"Dashboard: failed to connect (continuing without)")
+                print(f"Dashboard: failed to connect to {dashboard_url} (continuing without)")
                 event_sink = None
         except ImportError:
             print("Dashboard: websockets package not installed (continuing without)")
