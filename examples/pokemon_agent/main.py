@@ -719,7 +719,7 @@ class PokemonAgent:
             self._log_action(
                 f"[{self._step_count}] Player House 2F {pos} → navigating to stairs (7,1)"
             )
-            reached = await self._routines.navigate_to(7, 1, max_steps=30)
+            reached = await self._routines.navigate_to(7, 1)
             if reached:
                 self._log_action(f"  at stairs, stepping up to descend")
                 await self._routines.press("up", 8)
@@ -731,7 +731,7 @@ class PokemonAgent:
             self._log_action(
                 f"[{self._step_count}] Player House 1F {pos} → navigating to exit"
             )
-            reached = await self._routines.navigate_to(3, 7, max_steps=30)
+            reached = await self._routines.navigate_to(3, 7)
             if reached:
                 self._log_action(f"  at door, stepping down to exit")
                 await self._routines.press("down", 8)
