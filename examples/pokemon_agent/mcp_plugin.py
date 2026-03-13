@@ -683,6 +683,9 @@ def _read_screen_text(emu_thread: EmulatorThread) -> dict:
 def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) -> None:
     """Register Pokemon Yellow-specific MCP tools."""
 
+    # Panel push helper — no-op when dashboard is not connected
+    _push_panel_fn = None
+
     # Register dashboard snapshot hook for live game state
     if dashboard is not None:
         import asyncio
@@ -755,6 +758,8 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
 
         dashboard.register_snapshot_hook(pokemon_snapshot_hook)
 
+        _push_panel_fn = _push_panel  # noqa: F841 — used by tool closures below
+
         dashboard.register_panels([
             {"id": "ascii_map",   "title": "ASCII Map",   "type": "ascii_map",
              "tools": ["render_ascii_map"]},
@@ -807,13 +812,19 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
 
         text_lines = _extract_text_lines(rows)
 
-        return {
+        result = {
             "address": f"0x{address:04X}",
             "width": width,
             "height": height,
             "rows": rows,
             "text_lines": text_lines,
         }
+
+        # Push to dashboard screen_text panel
+        if _push_panel_fn is not None:
+            _push_panel_fn("screen_text", result, "screen_text")
+
+        return result
 
     # ----------------------------------------------------------
     # read_screen_tiles
@@ -882,7 +893,13 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
         """
         if err := _require_rom(emu_thread):
             return err
-        return _render_map(emu_thread, include_legend)
+        result = _render_map(emu_thread, include_legend)
+
+        # Push to dashboard ascii_map panel
+        if _push_panel_fn is not None and "error" not in result:
+            _push_panel_fn("ascii_map", result, "ascii_map")
+
+        return result
 
     # ----------------------------------------------------------
     # press_and_read — composite tool: press key + wait + read screen
@@ -942,6 +959,10 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
         player_x = _read_byte(emu_thread, WRAM_X_COORD)
         player_y = _read_byte(emu_thread, WRAM_Y_COORD)
 
+        # Push to dashboard screen_text panel
+        if _push_panel_fn is not None:
+            _push_panel_fn("screen_text", {"rows": rows, "text_lines": text_lines}, "screen_text")
+
         return {
             "key": k,
             "player_x": player_x,
@@ -987,6 +1008,10 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
             row_text = "".join(_decode_tile(t) for t in row_tiles)
             rows.append(row_text)
         text_lines = _extract_text_lines(rows)
+
+        # Push to dashboard screen_text panel
+        if _push_panel_fn is not None:
+            _push_panel_fn("screen_text", {"rows": rows, "text_lines": text_lines}, "screen_text")
 
         return {
             "text_lines": text_lines,
