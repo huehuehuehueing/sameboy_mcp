@@ -754,8 +754,8 @@ class PokemonAgent:
                 await self._routines.walk("up", 10)
             return True
 
-        # Oak's Lab (map 39) → just advance dialog (press A)
-        if state.map_id == 39:
+        # Oak's Lab (map 40) → just advance dialog (press A)
+        if state.map_id == 40:
             self._log_action(
                 f"[{self._step_count}] Oak's Lab {pos} — pressing A to advance"
             )
