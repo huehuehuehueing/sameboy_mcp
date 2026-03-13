@@ -663,9 +663,10 @@ class PokemonAgent:
         """
         pos = f"({state.player_x},{state.player_y})"
 
-        # ── Burn through ignore_input quickly ───────────────
-        if state.ignore_input > 5:
-            # Check for text prompts that need A press
+        # ── Wait for scripted sequences to finish ─────────
+        # Use joypad_disabled (BIT_DISABLE_JOYPAD) as the authoritative
+        # check — ignore_input counter is unreliable (stale values).
+        if state.joypad_disabled or state.joypad_sim != 0:
             has_prompt = any(
                 "\u25bc" in l
                 for l in (state.screen_text.lines if state.screen_text else [])
@@ -681,9 +682,8 @@ class PokemonAgent:
                 )
             else:
                 self._log_action(
-                    f"[{self._step_count}] {state.map_name} {pos} — ignore_input={state.ignore_input}, burning frames"
+                    f"[{self._step_count}] {state.map_name} {pos} — joypad disabled, burning frames"
                 )
-            # Run extra frames to burn through the counter faster
             await self._routines.wait_frames(120)
             return True
 
@@ -1086,8 +1086,8 @@ class PokemonAgent:
                     await self._routines.execute_battle_move(0)
 
             case GameMode.OVERWORLD:
-                # If game is ignoring input (post-intro cutscene)
-                if state.ignore_input > 10 and not self._active_instruction:
+                # If game is blocking input (scripted cutscene)
+                if (state.joypad_disabled or state.joypad_sim != 0) and not self._active_instruction:
                     screen_preview = ""
                     if state.screen_text and state.screen_text.has_text:
                         text_lines = [l for l in state.screen_text.lines if l.strip()]
@@ -1104,19 +1104,13 @@ class PokemonAgent:
                     elif state.joypad_sim != 0:
                         self._log_action(
                             f"[{self._step_count}] {state.map_name} — scripted sequence "
-                            f"(sim={state.joypad_sim}, counter={state.ignore_input}), waiting"
+                            f"(sim={state.joypad_sim}), waiting"
                             f"  [screen: {screen_preview}]"
                         )
-                    elif self._intro_names_done >= 2 and state.party_count == 0 and state.map_id == 38:
-                        self._log_action(
-                            f"[{self._step_count}] {state.map_name} — post-intro, waiting "
-                            f"(ignore_input={state.ignore_input}, timer={state.game_timer_counting})"
-                        )
-                        await self._log_intro_debug(state)
                     else:
                         self._log_action(
-                            f"[{self._step_count}] {state.map_name} — ignore_input="
-                            f"{state.ignore_input}, waiting  [screen: {screen_preview}]"
+                            f"[{self._step_count}] {state.map_name} — joypad disabled, waiting"
+                            f"  [screen: {screen_preview}]"
                         )
 
                     await self._routines.wait_frames(self.config.cycle_frames)
