@@ -87,18 +87,44 @@ class Routines:
         self._cached_warps_data: list = []  # raw warps data from render_ascii_map
         # Warp we arrived from — excluded from pathfinding targets to avoid loops
         self._arrival_warp: tuple[int, int, int] | None = None  # (map_id, x, y)
+        # Screen text cache — avoids redundant decode_screen_text calls
+        self._last_screen_text: dict | None = None
 
     def _log(self, msg: str):
         if self._verbose:
             print(f"  [routine] {msg}")
 
+    # ── Screen text cache ──────────────────────────────
+
+    def get_cached_screen_text(self) -> dict | None:
+        """Return cached screen text if available, else None."""
+        return self._last_screen_text
+
+    def _cache_screen_text(self, result: dict) -> None:
+        """Cache screen text from a press_and_read or decode_screen_text result."""
+        if result and "text_lines" in result:
+            self._last_screen_text = result
+
+    def _invalidate_screen_text(self) -> None:
+        """Invalidate screen text cache (called after any input that changes screen)."""
+        self._last_screen_text = None
+
     # ============================================================
     # Low-level helpers
     # ============================================================
 
+    async def call_tool(self, name: str, **kwargs) -> dict:
+        """Call an MCP tool by name. Caches screen text results automatically."""
+        self._invalidate_screen_text()
+        result = await self._call(name, kwargs)
+        if isinstance(result, dict) and "text_lines" in result:
+            self._cache_screen_text(result)
+        return result
+
     async def press(self, key: str, frames: int = 4):
         """Press a button for N frames."""
         self._log(f"press {key} ({frames}f)")
+        self._invalidate_screen_text()
         await self._call("press_key", {"key": key, "frames": frames})
 
     async def press_combo(self, keys: list[str], frames: int = 4):
@@ -441,6 +467,7 @@ class Routines:
         direction: "up", "down", "left", "right"
         Returns True if movement completed (position changed).
         """
+        self._invalidate_screen_text()
         self._log(f"walking {direction} x{steps}")
 
         for step in range(steps):
