@@ -776,7 +776,118 @@ class PokemonAgent:
                 self._log_action(f"[{self._step_count}] Instruction: {self._active_instruction}")
                 # Fall through to LLM execution below
 
-        # When not on autopilot and no active instruction, wait
+        # ── Coded-routine modes (no LLM needed) ──────────────────────
+        # Handle early-game and scripted modes BEFORE the autopilot/LLM
+        # gates.  These use deterministic coded routines and run whenever
+        # autopilot is on — no LLM required.
+        _CODED_MODES = {
+            GameMode.TITLE_SCREEN, GameMode.MAIN_MENU,
+            GameMode.INTRO, GameMode.NAME_ENTRY, GameMode.WHITEOUT,
+        }
+        _is_intro_dialog = (
+            state.mode in (GameMode.DIALOG, GameMode.MENU)
+            and state.party_count == 0
+            and state.badge_count == 0
+            and not state.game_timer_counting
+        )
+
+        if state.mode in _CODED_MODES or _is_intro_dialog:
+            if not self._autopilot and not self._active_instruction:
+                if self._step_count % 30 == 0:
+                    self._log_action(
+                        f"[{self._step_count}] {state.map_name} — waiting (send a prompt or click Resume for autopilot)"
+                    )
+                await self._routines.wait_frames(60)
+                return True
+
+            match state.mode:
+                case GameMode.TITLE_SCREEN:
+                    screen_preview = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        screen_preview = " | ".join(
+                            l for l in state.screen_text.lines if l.strip()
+                        )[:80]
+                    self._log_action(
+                        f"[{self._step_count}] Title Screen — pressing Start"
+                        f"  [screen: {screen_preview}]"
+                    )
+                    await self._routines.handle_title_screen()
+
+                case GameMode.MAIN_MENU:
+                    screen_preview = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        text_lines = [l for l in state.screen_text.lines if l.strip()]
+                        screen_preview = " | ".join(text_lines)[:80]
+                    self._log_action(
+                        f"[{self._step_count}] Main Menu (cursor={state.menu_cursor})"
+                        f" — selecting New Game  [screen: {screen_preview}]"
+                    )
+                    await self._routines.handle_main_menu(select_new_game=True)
+
+                case GameMode.INTRO:
+                    screen_preview = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        text_lines = [l for l in state.screen_text.lines if l.strip()]
+                        screen_preview = " | ".join(text_lines)[:80]
+                    result = await self._routines.advance_intro()
+                    self._log_action(
+                        f"[{self._step_count}] Intro — {result}"
+                        f"  [screen: {screen_preview}]"
+                    )
+                    await self._log_intro_debug(state)
+
+                case GameMode.NAME_ENTRY:
+                    screen_preview = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        text_lines = [l for l in state.screen_text.lines if l.strip()]
+                        screen_preview = " | ".join(text_lines)[:80]
+                    screen_text_upper = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        screen_text_upper = state.screen_text.full_text.upper()
+                    if "RIVAL" in screen_text_upper or "HIS NAME" in screen_text_upper:
+                        name = "GARY"
+                    else:
+                        name = "ASH"
+                    self._log_action(
+                        f"[{self._step_count}] Name Entry — typing '{name}'"
+                        f"  [screen: {screen_preview}]"
+                    )
+                    result = await self._routines.enter_name(name)
+                    if result:
+                        self._intro_names_done += 1
+                        self._log_action(f"  name entered ({self._intro_names_done}/2 done)")
+
+                case GameMode.WHITEOUT:
+                    self._log_action(f"[{self._step_count}] Whiteout — advancing text")
+                    await self._routines.handle_whiteout()
+
+                case GameMode.DIALOG | GameMode.MENU:
+                    # Intro dialog (pre-starter) — coded A presses
+                    screen_preview = ""
+                    if state.screen_text and state.screen_text.has_text:
+                        text_lines = [l for l in state.screen_text.lines if l.strip()]
+                        screen_preview = " | ".join(text_lines)[:80]
+                    if not state.names_set and self._intro_names_done < 2:
+                        print(state.map_id, state.player_x, state.player_y)
+                        result = await self._routines.advance_intro()
+                        self._log_action(
+                            f"[{self._step_count}] Intro — {result}"
+                            f"  [screen: {screen_preview}]"
+                        )
+                        await self._log_intro_debug(state)
+                    else:
+                        result = await self._routines.advance_intro()
+                        self._log_action(
+                            f"[{self._step_count}] Intro (post-names) — {result}"
+                            f"  [screen: {screen_preview}]"
+                        )
+                        await self._log_intro_debug(state)
+
+            await self._routines.wait_frames(self.config.cycle_frames)
+            return True
+
+        # ── LLM-requiring modes ──────────────────────────────────────
+        # BATTLE, OVERWORLD, and post-intro DIALOG/MENU need the LLM.
         if not self._autopilot and not self._active_instruction:
             if self._step_count % 30 == 0:
                 self._log_action(
@@ -786,7 +897,6 @@ class PokemonAgent:
             return True
 
         if self._llm_agent and not self._llm_agent.is_available:
-            # Always log when there's an active instruction waiting
             if self._active_instruction or self._step_count % 30 == 0:
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} — LLM unavailable, use dashboard actions"
@@ -794,23 +904,19 @@ class PokemonAgent:
             await self._routines.wait_frames(60)
             return True
 
-        # Act based on game mode
         match state.mode:
             case GameMode.BATTLE:
                 my_name = state.battle.my_pokemon.species_name if state.battle and state.battle.my_pokemon else "???"
                 enemy_name = state.battle.enemy_pokemon.species_name if state.battle and state.battle.enemy_pokemon else "???"
 
-                # Build battle context for LLM with full pre-read data
                 battle_context = self._build_battle_context(state)
 
                 self._log_action(
                     f"[{self._step_count}] {state.map_name} BATTLE MODE: {my_name} vs {enemy_name}"
                 )
 
-                # Use full strategy tools when operator instruction is active
                 active_tools = self._strategy_tools if self._active_instruction else self._battle_tools
 
-                # Use LLM tool agent for battle decisions
                 decision = await self._llm_agent.run_with_tools(
                     STRATEGY_SYSTEM_PROMPT if self._active_instruction else BATTLE_SYSTEM_PROMPT,
                     battle_context,
@@ -861,7 +967,6 @@ class PokemonAgent:
 
                     has_prompt = any("\u25bc" in l for l in (state.screen_text.lines if state.screen_text else []))
                     if has_prompt:
-                        # ▼ prompt — text system waiting for input, safe to press A
                         self._log_action(
                             f"[{self._step_count}] {state.map_name} — text ▼, pressing A"
                             f"  [screen: {screen_preview}]"
@@ -869,27 +974,18 @@ class PokemonAgent:
                         await self._routines.press("a", 4)
                         await self._routines.wait_frames(30)
                     elif state.joypad_sim != 0:
-                        # Game is simulating joypad (scripted sequence) —
-                        # don't press A, it interferes
                         self._log_action(
                             f"[{self._step_count}] {state.map_name} — scripted sequence "
                             f"(sim={state.joypad_sim}, counter={state.ignore_input}), waiting"
                             f"  [screen: {screen_preview}]"
                         )
                     elif self._intro_names_done >= 2 and state.party_count == 0 and state.map_id == 38:
-                        # Post-intro transition: player at (3,6) facing UP in
-                        # Player House 2F.  DO NOT press A — it triggers the
-                        # hidden SNES event at (3,5) causing an infinite loop.
-                        # Just wait for ignore_input to count down to 0.
                         self._log_action(
                             f"[{self._step_count}] {state.map_name} — post-intro, waiting "
                             f"(ignore_input={state.ignore_input}, timer={state.game_timer_counting})"
                         )
                         await self._log_intro_debug(state)
                     else:
-                        # No visible dialog prompt — wait for counter to tick down.
-                        # Pressing A without a ▼ prompt risks triggering hidden events
-                        # that reset ignore_input → infinite loop.
                         self._log_action(
                             f"[{self._step_count}] {state.map_name} — ignore_input="
                             f"{state.ignore_input}, waiting  [screen: {screen_preview}]"
@@ -906,20 +1002,16 @@ class PokemonAgent:
                     self._stuck_counter = 0
                     self._last_position = current_pos
 
-                # Log screen text if available (for debugging)
                 if self.config.verbose and state.screen_text and state.screen_text.has_text:
                     text_preview = state.screen_text.full_text[:100].replace("\n", " | ")
                     print(f"  [screen] {text_preview}")
 
-                # All overworld decisions go through the LLM tool agent
-                # Include area context from analyzer
                 area_context = ""
                 if self._area_analyzer:
                     area_context = self._area_analyzer.get_area_context_for_llm(
                         state.map_id, state.player_x, state.player_y
                     )
 
-                # Build stuck warning if position hasn't changed
                 stuck_warning = ""
                 if self._stuck_counter >= 3:
                     stuck_warning = (
@@ -928,7 +1020,6 @@ class PokemonAgent:
                         f"to navigate around the obstacle. ***"
                     )
 
-                # Prepend active instruction (persists across cycles)
                 operator_instruction = ""
                 if self._active_instruction:
                     operator_instruction = f"[OPERATOR INSTRUCTION: {self._active_instruction}]\nFollow this instruction. Use decode_screen_text and render_ascii_map to understand the current state.\n\n"
@@ -955,7 +1046,6 @@ Use tools to analyze the situation, then call report_result with your action."""
                 if self._handle_stopped_decision(decision):
                     return True
 
-                # When LLM is unavailable, wait for dashboard actions
                 if decision.get("_no_llm"):
                     self._log_action(
                         f"[{self._step_count}] {state.map_name} — LLM unavailable, use dashboard actions"
@@ -967,55 +1057,19 @@ Use tools to analyze the situation, then call report_result with your action."""
                 await self._execute_overworld_decision(decision, state)
                 print(f"  [debug] AFTER _execute_overworld_decision returned")
 
-                # Instruction fulfilled — clear it so the loop stops.
-                # Autopilot was turned on just to serve the instruction,
-                # so turn it off too.
                 if self._active_instruction:
                     self._log_action(f"  instruction complete, waiting for next prompt")
                     self._active_instruction = None
                     self._autopilot = False
 
-            case GameMode.DIALOG | GameMode.MENU if state.party_count == 0 and state.badge_count == 0 and not state.game_timer_counting:
-                # Intro phase (before getting starter Pokemon) — use coded
-                # routines instead of LLM to advance Oak's dialog, handle
-                # preset name lists, etc.  Deterministic and free.
-                # Always press A: the text engine reads hJoyPressed directly
-                # (bypasses wIgnoreInputCounter), so A always advances dialog.
-                screen_preview = ""
-                if state.screen_text and state.screen_text.has_text:
-                    text_lines = [l for l in state.screen_text.lines if l.strip()]
-                    screen_preview = " | ".join(text_lines)[:80]
-                if not state.names_set and self._intro_names_done < 2:
-                    print(state.map_id, state.player_x, state.player_y)
-                    result = await self._routines.advance_intro()
-                    self._log_action(
-                        f"[{self._step_count}] Intro — {result}"
-                        f"  [screen: {screen_preview}]"
-                    )
-                    await self._log_intro_debug(state)
-                else:
-                    # Both names entered — keep pressing A to finish
-                    # remaining OakSpeech dialog (shrink animation, etc.)
-                    # until SpecialEnterMap sets game_timer_counting.
-                    result = await self._routines.advance_intro()
-                    self._log_action(
-                        f"[{self._step_count}] Intro (post-names) — {result}"
-                        f"  [screen: {screen_preview}]"
-                    )
-                    await self._log_intro_debug(state)
-
-            case GameMode.DIALOG | GameMode.MENU if self._autopilot or self._active_instruction:
-                # Short LLM call focused only on the current dialog/menu.
-                # Uses DIALOG_SYSTEM_PROMPT (no exploration) and low max_turns
-                # so control returns quickly for the next cycle.
+            case GameMode.DIALOG | GameMode.MENU:
+                # Post-intro dialog/menu — use LLM
                 operator_instruction = ""
                 if self._active_instruction:
                     operator_instruction = (
                         f"[OPERATOR INSTRUCTION: {self._active_instruction}]\n\n"
                     )
 
-                # Provide current screen text so the LLM doesn't waste a
-                # tool call on decode_screen_text just to see what's open.
                 screen_preview = ""
                 if state.screen_text and state.screen_text.has_text:
                     text_lines = [l for l in state.screen_text.lines if l.strip()]
@@ -1026,8 +1080,6 @@ Use tools to analyze the situation, then call report_result with your action."""
 
 Navigate it and call report_result when the dialog closes (blank text_lines)."""
 
-                # Use full strategy tools when operator instruction is active
-                # (it may need save states, cheats, etc. unrelated to dialog)
                 active_tools = self._strategy_tools if self._active_instruction else self._dialog_tools
 
                 decision = await self._llm_agent.run_with_tools(
@@ -1047,10 +1099,6 @@ Navigate it and call report_result when the dialog closes (blank text_lines)."""
                     await self._routines.wait_frames(60)
                     return True
 
-                # For dialog-only actions (interact, wait, explore) the LLM
-                # already handled them via press_and_read — just log.
-                # But AUTOPILOT actions (navigate_route, navigate_to, find_exit,
-                # etc.) need to be dispatched to _execute_overworld_decision.
                 _AUTOPILOT_ACTIONS = {
                     "navigate_route", "navigate_to", "find_exit",
                     "find_pokecenter", "collect_item", "collect_hidden", "heal",
@@ -1070,115 +1118,10 @@ Navigate it and call report_result when the dialog closes (blank text_lines)."""
                     self._active_instruction = None
                     self._autopilot = False
 
-            case GameMode.TITLE_SCREEN:
-                screen_preview = ""
-                if state.screen_text and state.screen_text.has_text:
-                    screen_preview = " | ".join(
-                        l for l in state.screen_text.lines if l.strip()
-                    )[:80]
-                self._log_action(
-                    f"[{self._step_count}] Title Screen — pressing Start"
-                    f"  [screen: {screen_preview}]"
-                )
-                await self._routines.handle_title_screen()
-
-            case GameMode.MAIN_MENU:
-                screen_preview = ""
-                if state.screen_text and state.screen_text.has_text:
-                    text_lines = [l for l in state.screen_text.lines if l.strip()]
-                    screen_preview = " | ".join(text_lines)[:80]
-                self._log_action(
-                    f"[{self._step_count}] Main Menu (cursor={state.menu_cursor})"
-                    f" — selecting New Game  [screen: {screen_preview}]"
-                )
-                await self._routines.handle_main_menu(select_new_game=True)
-
-            case GameMode.INTRO:
-                screen_preview = ""
-                if state.screen_text and state.screen_text.has_text:
-                    text_lines = [l for l in state.screen_text.lines if l.strip()]
-                    screen_preview = " | ".join(text_lines)[:80]
-                result = await self._routines.advance_intro()
-                self._log_action(
-                    f"[{self._step_count}] Intro — {result}"
-                    f"  [screen: {screen_preview}]"
-                )
-                await self._log_intro_debug(state)
-
-            case GameMode.NAME_ENTRY:
-                screen_preview = ""
-                if state.screen_text and state.screen_text.has_text:
-                    text_lines = [l for l in state.screen_text.lines if l.strip()]
-                    screen_preview = " | ".join(text_lines)[:80]
-                # Detect rival naming from screen text — naming_type memory
-                # (0xCF91) reads 0 for both player and rival screens
-                screen_text_upper = ""
-                if state.screen_text and state.screen_text.has_text:
-                    screen_text_upper = state.screen_text.full_text.upper()
-                if "RIVAL" in screen_text_upper or "HIS NAME" in screen_text_upper:
-                    name = "GARY"
-                else:
-                    name = "ASH"
-                self._log_action(
-                    f"[{self._step_count}] Name Entry — typing '{name}'"
-                    f"  [screen: {screen_preview}]"
-                )
-                result = await self._routines.enter_name(name)
-                if result:
-                    self._intro_names_done += 1
-                    self._log_action(f"  name entered ({self._intro_names_done}/2 done)")
-
-            case GameMode.WHITEOUT:
-                self._log_action(f"[{self._step_count}] Whiteout — advancing text")
-                await self._routines.handle_whiteout()
-
             case _:
-                self._log_action(f"CATCH-ALL: {state.map_name} — mode {state.mode.name if state.mode else 'UNKNOWN'}")
-
-                # Non-battle/overworld modes (name entry, intro, etc.)
                 mode_name = state.mode.name if state.mode else "UNKNOWN"
-                if self._active_instruction:
-                    # Mode is unexpected but user gave an instruction —
-                    # treat as overworld so the LLM can still work on it.
-                    self._log_action(
-                        f"[{self._step_count}] {state.map_name} — "
-                        f"mode {mode_name}, treating as overworld for instruction"
-                    )
-                    # Re-use the overworld handler by falling through to it
-                    area_context = ""
-                    if self._area_analyzer:
-                        area_context = self._area_analyzer.get_area_context_for_llm(
-                            state.map_id, state.player_x, state.player_y
-                        )
-                    operator_instruction = f"[OPERATOR INSTRUCTION: {self._active_instruction}]\nFollow this instruction.\n\n"
-                    strategy_context = f"""{operator_instruction}Overworld state:
-Map: {state.map_name} (ID: {state.map_id})
-Position: ({state.player_x}, {state.player_y})
-Party size: {state.party_count}
-Badges: {state.badge_count}/8
-
-Area Analysis:
-{area_context}
-
-Use tools to analyze the situation, then call report_result with your action."""
-
-                    decision = await self._llm_agent.run_with_tools(
-                        STRATEGY_SYSTEM_PROMPT,
-                        strategy_context,
-                        max_turns=60,
-                        tools=self._strategy_tools,
-                        cache_key="strategy",
-                    )
-                    if self._handle_stopped_decision(decision):
-                        return True
-                    if not decision.get("_no_llm"):
-                        await self._execute_overworld_decision(decision, state)
-                    if self._active_instruction:
-                        self._log_action(f"  instruction complete, waiting for next prompt")
-                        self._active_instruction = None
-                        self._autopilot = False
-                else:
-                    await self._routines.wait_frames(self.config.cycle_frames)
+                self._log_action(f"[{self._step_count}] {state.map_name} — mode {mode_name}")
+                await self._routines.wait_frames(self.config.cycle_frames)
 
         # Run some frames between decisions
         await self._routines.wait_frames(self.config.cycle_frames)
