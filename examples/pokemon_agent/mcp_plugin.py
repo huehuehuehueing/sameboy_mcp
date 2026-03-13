@@ -767,6 +767,24 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
              "tools": ["decode_screen_text", "press_and_read", "wait_and_read"]},
         ])
 
+        # Refresh dashboard text after state loads / resume so panels don't desync
+        def _refresh_screen_text():
+            """Decode screen tiles and push to dashboard."""
+            total = 20 * 18
+            all_bytes = _read_bytes(emu_thread, 0xC3A0, total)
+            if len(all_bytes) < total:
+                return
+            rows = []
+            for y in range(18):
+                row_start = y * 20
+                row_tiles = all_bytes[row_start:row_start + 20]
+                rows.append("".join(_decode_tile(t) for t in row_tiles))
+            text_lines = _extract_text_lines(rows)
+            _push_panel("screen_text", {"rows": rows, "text_lines": text_lines}, "screen_text")
+
+        for tool_name in ("load_state", "resume", "import_state"):
+            dashboard.register_post_tool_hook(tool_name, _refresh_screen_text)
+
     # ----------------------------------------------------------
     # decode_screen_text
     # ----------------------------------------------------------

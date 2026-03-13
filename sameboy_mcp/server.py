@@ -257,6 +257,67 @@ def create_server(
     return server, emulator, emu_thread
 
 
+def install_dashboard_hooks(server: FastMCP, dashboard_server) -> None:
+    """Wrap all MCP tool calls to support dashboard prompt injection and logging.
+
+    When a dashboard is active:
+    - Pending prompt injections are drained and appended to tool responses
+    - If verbose mode is enabled, tool calls are logged to the dashboard
+    """
+    import functools
+    import json as _json
+
+    tm = server._tool_manager
+    original_call_tool = tm.call_tool
+
+    @functools.wraps(original_call_tool)
+    async def wrapped_call_tool(name, arguments, context=None, convert_result=False):
+        result = await original_call_tool(name, arguments, context=context, convert_result=convert_result)
+
+        # Log tool call to dashboard if verbose
+        if dashboard_server._verbose:
+            try:
+                result_summary = str(result)
+                if len(result_summary) > 200:
+                    result_summary = result_summary[:200] + "..."
+            except Exception:
+                result_summary = None
+            dashboard_server.emit_tool_call(name, arguments, result_summary)
+
+        # Run post-tool hooks (e.g. refresh dashboard text after load_state)
+        for hook in dashboard_server.get_post_tool_hooks(name):
+            try:
+                hook()
+            except Exception:
+                pass
+
+        # Drain pending prompt injections and piggy-back on response
+        prompts = dashboard_server.drain_prompts()
+        if prompts:
+            # Append dashboard prompts to the tool result
+            # Result can be a list of ContentBlock or a dict
+            if isinstance(result, dict):
+                result["_dashboard_prompts"] = prompts
+            elif isinstance(result, (list, tuple)):
+                # For structured content, wrap in a text content block
+                from mcp.types import TextContent
+                prompt_text = "\n".join(
+                    f"[DASHBOARD MESSAGE]: {p}" for p in prompts
+                )
+                result = list(result) + [TextContent(type="text", text=prompt_text)]
+            else:
+                # Fallback: wrap result
+                from mcp.types import TextContent
+                prompt_text = "\n".join(
+                    f"[DASHBOARD MESSAGE]: {p}" for p in prompts
+                )
+                result = [result, TextContent(type="text", text=prompt_text)]
+
+        return result
+
+    tm.call_tool = wrapped_call_tool
+
+
 def load_plugins(
     server: FastMCP,
     emu_thread: EmulatorThread,
@@ -290,6 +351,7 @@ async def run_server(
     plugins: list[str] | None = None,
     dashboard: bool = False,
     dashboard_port: int = 8766,
+    dashboard_verbose: bool = False,
 ) -> None:
     """
     Run the MCP server.
@@ -305,6 +367,7 @@ async def run_server(
         plugins: Optional list of plugin module paths
         dashboard: Enable web dashboard
         dashboard_port: Port for standalone dashboard (stdio mode only)
+        dashboard_verbose: Log MCP tool calls to dashboard agent log
     """
     server, emulator, emu_thread = create_server(
         lib_path=lib_path,
@@ -330,13 +393,16 @@ async def run_server(
 
             if dashboard:
                 from .dashboard import DashboardServer
-                dashboard_server = DashboardServer(emu_thread)
+                dashboard_server = DashboardServer(emu_thread, verbose=dashboard_verbose)
                 dashboard_server.mount(app)
                 dashboard_server.start()
                 print(f"Dashboard: http://{host}:{port}/dashboard/", file=sys.stderr)
 
             # Load plugins after dashboard so they can register snapshot hooks
             load_plugins(server, emu_thread, plugins, dashboard_server)
+
+            if dashboard_server:
+                install_dashboard_hooks(server, dashboard_server)
 
             config = uvicorn.Config(app, host=host, port=port, log_level="warning")
             uvicorn_server = uvicorn.Server(config)
@@ -348,7 +414,7 @@ async def run_server(
             if dashboard:
                 import uvicorn
                 from .dashboard import DashboardServer
-                dashboard_server = DashboardServer(emu_thread)
+                dashboard_server = DashboardServer(emu_thread, verbose=dashboard_verbose)
                 dash_app = dashboard_server.create_app()
 
                 dash_config = uvicorn.Config(
@@ -361,6 +427,9 @@ async def run_server(
 
             # Load plugins after dashboard so they can register snapshot hooks
             load_plugins(server, emu_thread, plugins, dashboard_server)
+
+            if dashboard_server:
+                install_dashboard_hooks(server, dashboard_server)
 
             await server.run_stdio_async()
     finally:
@@ -457,6 +526,11 @@ Examples:
         default=8766,
         help="Port for standalone dashboard in stdio mode (default: 8766)",
     )
+    parser.add_argument(
+        "--dashboard-verbose",
+        action="store_true",
+        help="Log all MCP tool calls to the dashboard agent log",
+    )
 
     args = parser.parse_args()
 
@@ -475,6 +549,7 @@ Examples:
             plugins=args.plugin,
             dashboard=args.dashboard,
             dashboard_port=args.dashboard_port,
+            dashboard_verbose=args.dashboard_verbose,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

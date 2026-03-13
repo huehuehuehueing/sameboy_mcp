@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import threading
+from collections import deque
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -28,7 +30,7 @@ class DashboardServer:
     standalone (stdio mode).
     """
 
-    def __init__(self, emu_thread: EmulatorThread) -> None:
+    def __init__(self, emu_thread: EmulatorThread, verbose: bool = False) -> None:
         self._emu_thread = emu_thread
         self._event_bus = EventBus()
         self._frame_relay: FrameRelay | None = None
@@ -38,6 +40,12 @@ class DashboardServer:
         self._last_agent_actions: list[dict] | None = None
         self._panel_registry: list[dict] | None = None
         self._last_panel_data: dict[str, dict] = {}
+        self._verbose = verbose
+        # Injection queue for MCP tool response piggy-backing (thread-safe)
+        self._injection_lock = threading.Lock()
+        self._injection_queue: deque[str] = deque(maxlen=50)
+        # Post-tool hooks: tool_name -> list of callables
+        self._post_tool_hooks: dict[str, list] = {}
 
     @property
     def event_bus(self) -> EventBus:
@@ -56,6 +64,41 @@ class DashboardServer:
             type=EventType.PANEL_REGISTRY,
             data={"panels": panels},
         ))
+
+    def add_injection(self, text: str) -> None:
+        """Queue a prompt injection (called from WS receiver)."""
+        with self._injection_lock:
+            self._injection_queue.append(text)
+
+    def drain_prompts(self) -> list[str]:
+        """Drain all pending prompt injections. Thread-safe."""
+        with self._injection_lock:
+            items = list(self._injection_queue)
+            self._injection_queue.clear()
+        # Also drain from agent_sink if it exists
+        if self._agent_sink:
+            items.extend(self._agent_sink.get_pending_injections())
+        return items
+
+    def emit_tool_call(self, name: str, args: dict, result: str | None = None) -> None:
+        """Publish an LLM_TOOL_CALL event to the dashboard."""
+        self._event_bus.publish(Event(
+            type=EventType.LLM_TOOL_CALL,
+            data={"name": name, "args": args, "result": result},
+        ))
+
+    def register_post_tool_hook(self, tool_name: str, callback) -> None:
+        """Register a callback to run after a specific MCP tool completes.
+
+        Args:
+            tool_name: Name of the MCP tool to hook (e.g. "load_state")
+            callback: Callable() that runs after the tool succeeds
+        """
+        self._post_tool_hooks.setdefault(tool_name, []).append(callback)
+
+    def get_post_tool_hooks(self, tool_name: str) -> list:
+        """Get registered post-tool hooks for a tool name."""
+        return self._post_tool_hooks.get(tool_name, [])
 
     def register_snapshot_hook(self, hook) -> None:
         """Register a plugin hook called during each snapshot poll.
@@ -215,6 +258,9 @@ class DashboardServer:
                             type=EventType.LLM_MESSAGE,
                             data={"role": "injection", "content": text_val},
                         ))
+                        # Queue on DashboardServer for MCP tool piggy-backing
+                        self.add_injection(text_val)
+                        # Also queue on agent sink if a same-process agent exists
                         if self._agent_sink:
                             self._agent_sink.add_injection(text_val)
                         logger.info(f"Prompt injection: {text_val[:80]}")
