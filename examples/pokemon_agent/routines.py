@@ -120,24 +120,24 @@ class Routines:
     async def ensure_overworld(self, max_attempts: int = 20) -> bool:
         """Clear any active dialog/menu so the player can move.
 
-        Uses the deterministic BIT_DISABLE_JOYPAD flag (wStatusFlags5 bit 5
-        at 0xD72F) — the same flag the game's joypad handler checks.
-        Presses B repeatedly to dismiss dialogs and close menus.
-        Returns True when joypad input is enabled.
+        Presses B (to close menus) and A (to advance NPC dialog) until
+        the mode returns to OVERWORLD and joypad is enabled.
+        Returns True when the player can freely walk.
         """
         for attempt in range(max_attempts):
             state = await self.read_state()
-            if not state.joypad_disabled and state.mode in (GameMode.OVERWORLD, GameMode.MENU):
+            if not state.joypad_disabled and state.mode == GameMode.OVERWORLD:
                 if attempt > 0:
-                    print(f"  [ensure_overworld] input enabled after {attempt} B presses")
+                    print(f"  [ensure_overworld] overworld after {attempt} presses")
                 return True
-            # Press B to dismiss dialog / close menu, then wait for animation
-            await self.press("b", 6)
+            # Alternate B (close menu) and A (advance dialog) to handle both
+            key = "b" if attempt % 2 == 0 else "a"
+            await self.press(key, 6)
             await self.wait_frames(12)
         state = await self.read_state()
         print(f"  [ensure_overworld] FAILED after {max_attempts} attempts, "
               f"mode={state.mode}, joypad_disabled={state.joypad_disabled}")
-        return not state.joypad_disabled
+        return state.mode == GameMode.OVERWORLD
 
     # ============================================================
     # Title Screen and Intro
@@ -445,14 +445,22 @@ class Routines:
         for step in range(steps):
             before = await self.read_state()
 
-            # If joypad is disabled (dialog/text active), try to clear it
-            if before.joypad_disabled:
-                self._log(f"joypad disabled (BIT_DISABLE_JOYPAD set), pressing B")
-                await self.press("b", 6)
-                await self.wait_frames(8)
-                before = await self.read_state()
-                if before.joypad_disabled:
-                    self._log(f"joypad still disabled, cannot walk")
+            # If dialog/menu is active, try to clear it before walking
+            if before.joypad_disabled or before.mode in (GameMode.DIALOG, GameMode.MENU):
+                self._log(f"dialog/menu active (disabled={before.joypad_disabled}, mode={before.mode.name}), clearing")
+                for _ in range(5):
+                    await self.press("b", 6)
+                    await self.wait_frames(8)
+                    before = await self.read_state()
+                    if not before.joypad_disabled and before.mode not in (GameMode.DIALOG, GameMode.MENU):
+                        break
+                else:
+                    # Try A in case it's an NPC dialog waiting for A press
+                    await self.press("a", 6)
+                    await self.wait_frames(8)
+                    before = await self.read_state()
+                if before.joypad_disabled or before.mode in (GameMode.DIALOG, GameMode.MENU):
+                    self._log(f"could not clear dialog/menu, cannot walk")
                     return False
 
             # Press direction and wait for walk animation
@@ -1611,11 +1619,14 @@ class Routines:
             print(f"  [nav-border] map changed during navigation to edge!")
             return True
 
-        print(f"  [nav-border] at ({state.player_x},{state.player_y}), walking {direction} to cross")
+        # Map compass direction to key name
+        _DIR_TO_KEY = {"north": "up", "south": "down", "east": "right", "west": "left"}
+        walk_key = _DIR_TO_KEY.get(direction, direction)
+        print(f"  [nav-border] at ({state.player_x},{state.player_y}), walking {walk_key} to cross")
 
         # Walk off the edge to trigger border connection
         for attempt in range(10):
-            success = await self.walk(direction, 1)
+            success = await self.walk(walk_key, 1)
             state = await self.read_state()
             if state.map_id != initial_map:
                 print(f"  [nav-border] CROSSED border to map {state.map_id}!")

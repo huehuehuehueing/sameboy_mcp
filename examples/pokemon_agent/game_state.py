@@ -688,6 +688,7 @@ class GameStateReader:
         names_set: bool = False,
         pc: int = 0,
         joypad_disabled: bool = False,
+        scripted_movement: bool = False,
     ) -> GameMode:
         """Detect current game mode from memory values."""
         # Lost battle
@@ -748,25 +749,30 @@ class GameStateReader:
             return GameMode.TITLE_SCREEN
 
         # Check for scripted sequence using wSimulatedJoypadStatesIndex
-        # This is the definitive way to detect if the game is controlling the player
-        # When non-zero, button presses are being simulated for cutscenes/intros
-        # Note: joypad_sim here is from the old address, we also check ignore_input
+        # The game only uses this index when BIT_SCRIPTED_MOVEMENT_STATE (bit 7
+        # of wStatusFlags5) is set (see AreInputsSimulated in overworld.asm).
+        # A stale non-zero value at 0xCC3F does NOT mean simulation is active —
+        # only trust it when the game's own scripted movement flag is also set.
         #
-        # IMPORTANT: Only use this for INTRO if we're still on the title/intro map (map_id == 0)
-        # Once we're in a real map (like Player House 2F = map 38), the game has transitioned
-        # to actual gameplay even if ignore_input is still counting down.
+        # For INTRO detection (map_id == 0, no party), we still check joypad_sim
+        # alone since the intro sequence may not set BIT_SCRIPTED_MOVEMENT_STATE.
         if joypad_sim != 0:
-            # Joypad simulation is active - game is controlling player
             if party_count == 0 and badges == 0 and map_id == 0:
                 print("Debug: Detected joypad simulation on title/intro map, detecting INTRO mode")
                 return GameMode.INTRO
-            return GameMode.DIALOG
+            if scripted_movement:
+                print(f"Debug _detect_mode: joypad_sim={joypad_sim} + scripted_movement → DIALOG (map={map_id})")
+                return GameMode.DIALOG
+            # Stale joypad_sim value without BIT_SCRIPTED_MOVEMENT_STATE — ignore
+            print(f"Debug _detect_mode: joypad_sim={joypad_sim} but scripted_movement=False, ignoring stale value")
 
-        # ignore_input counter only indicates INTRO if we're still on map 0
-        # Once in a real map, ignore_input may still be counting but player is in gameplay
-        if ignore_input > 10 and map_id == 0:
+        # ignore_input counter only indicates INTRO/DIALOG on map 0 when the
+        # game hasn't started yet.  Pallet Town is also map_id=0, so guard
+        # with `not names_set` to avoid false DIALOG on the actual overworld.
+        if ignore_input > 10 and map_id == 0 and not names_set:
             if party_count == 0 and badges == 0:
                 return GameMode.INTRO
+            print(f"Debug _detect_mode: ignore_input={ignore_input} → DIALOG (map={map_id})")
             return GameMode.DIALOG
 
         # ── Deterministic dialog detection ──────────────────────
@@ -776,6 +782,7 @@ class GameStateReader:
         # game's own "input blocked" flag and is the authoritative
         # indicator of dialog/text state.
         if joypad_disabled:
+            print(f"Debug _detect_mode: joypad_disabled=True (flags5=0x{0x20:02X}) → DIALOG (map={map_id})")
             return GameMode.DIALOG
 
         # Secondary: screen tile analysis as fallback for menus that
@@ -792,9 +799,20 @@ class GameStateReader:
             has_text_chars = has_text_content(flat_tiles)
 
         if has_visible_textbox and has_text_chars:
+            # Distinguish NPC dialog from menus using prompt tiles:
+            #   0xEE = ▼ (continuation prompt — "press A for more text")
+            #   0xED = ▶ (menu cursor — selectable option)
+            # NPC dialog has ▼ and no ▶; menus have ▶ and no ▼.
+            DIALOG_PROMPT_TILE = 0xEE  # ▼
+            has_dialog_prompt = DIALOG_PROMPT_TILE in flat_tiles
+            if has_dialog_prompt:
+                print(f"Debug _detect_mode: textbox + ▼ prompt → DIALOG (map={map_id})")
+                return GameMode.DIALOG
+            print(f"Debug _detect_mode: textbox={has_visible_textbox} text={has_text_chars} → MENU (map={map_id})")
             return GameMode.MENU
 
         # Overworld (default for gameplay)
+        print(f"Debug _detect_mode: → OVERWORLD (map={map_id}, joypad_sim={joypad_sim}, ignore={ignore_input}, joypad_disabled={joypad_disabled})")
         return GameMode.OVERWORLD
 
     async def read_state(self) -> GameState:
@@ -838,6 +856,7 @@ class GameStateReader:
         # button presses are discarded by DiscardButtonPresses.
         status_flags5 = await self._read_byte(mem.WRAM_STATUS_FLAGS5)
         joypad_disabled = bool(status_flags5 & 0x20)  # bit 5
+        scripted_movement = bool(status_flags5 & 0x80)  # bit 7 BIT_SCRIPTED_MOVEMENT_STATE
 
         # Read wStatusFlags6 — bit 0 (BIT_GAME_TIMER_COUNTING) is set once
         # by SpecialEnterMap after OakSpeech returns.  Never cleared.
@@ -897,6 +916,7 @@ class GameStateReader:
             joypad_sim=joypad_sim,
             names_set=names_set,
             joypad_disabled=joypad_disabled,
+            scripted_movement=scripted_movement,
         )
 
         # Read party Pokemon
