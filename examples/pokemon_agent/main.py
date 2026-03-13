@@ -707,6 +707,15 @@ class PokemonAgent:
 
         # Player House 2F (map 38) → go to stairs at (7,1) and go down
         if state.map_id == 38:
+            # Avoid SNES at (3,5): if player is at (3,6) facing up,
+            # stepping up triggers the SNES hidden event and resets
+            # ignore_input → infinite loop.  Move right first.
+            if state.player_x == 3 and state.player_y >= 5:
+                self._log_action(
+                    f"[{self._step_count}] Player House 2F {pos} → dodging SNES, stepping right"
+                )
+                await self._routines.walk("right", 2)
+                return True
             self._log_action(
                 f"[{self._step_count}] Player House 2F {pos} → navigating to stairs (7,1)"
             )
