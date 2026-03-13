@@ -103,6 +103,10 @@ class CollisionMap:
         # True = walkable, False = blocked
         self._grid: list[list[bool]] = [[True for _ in range(width)] for _ in range(height)]
         self._npcs: set[tuple[int, int]] = set()
+        # Ledge tiles: (x, y) -> allowed approach direction
+        # e.g. a down-ledge at (5,10) means you can only enter from "down" direction
+        # (moving from y=9 to y=10, i.e., walking south)
+        self._ledges: dict[tuple[int, int], str] = {}
 
     def set_blocked(self, x: int, y: int):
         """Mark a tile as blocked."""
@@ -114,12 +118,18 @@ class CollisionMap:
         if 0 <= x < self.width and 0 <= y < self.height:
             self._grid[y][x] = True
 
+    def set_ledge(self, x: int, y: int, direction: str):
+        """Mark a tile as a one-way ledge passable only in the given direction."""
+        if 0 <= x < self.width and 0 <= y < self.height:
+            self._ledges[(x, y)] = direction
+            self._grid[y][x] = True  # Ledges are walkable from correct direction
+
     def add_npc(self, x: int, y: int):
         """Mark an NPC position (blocks movement)."""
         self._npcs.add((x, y))
 
     def is_walkable(self, x: int, y: int) -> bool:
-        """Check if a tile is walkable."""
+        """Check if a tile is walkable (ignoring direction for ledges)."""
         # Check bounds
         if x < 0 or x >= self.width or y < 0 or y >= self.height:
             return False
@@ -129,8 +139,20 @@ class CollisionMap:
         # Check collision grid
         return self._grid[y][x]
 
+    def is_walkable_from(self, x: int, y: int, approach_direction: str) -> bool:
+        """Check if a tile is walkable when approached from the given direction.
+
+        For ledge tiles, only the correct approach direction is allowed.
+        For regular tiles, this behaves like is_walkable().
+        """
+        if not self.is_walkable(x, y):
+            return False
+        if (x, y) in self._ledges:
+            return self._ledges[(x, y)] == approach_direction
+        return True
+
     def get_neighbors(self, x: int, y: int) -> list[tuple[int, int, str]]:
-        """Get walkable neighbors with directions."""
+        """Get walkable neighbors with directions, respecting ledge directionality."""
         neighbors = []
         # Order: down, left, right, up (prioritize exits which are usually down)
         directions = [
@@ -141,7 +163,7 @@ class CollisionMap:
         ]
         for dx, dy, direction in directions:
             nx, ny = x + dx, y + dy
-            if self.is_walkable(nx, ny):
+            if self.is_walkable_from(nx, ny, direction):
                 neighbors.append((nx, ny, direction))
         return neighbors
 
@@ -164,6 +186,8 @@ class CollisionMap:
 # Characters in the ASCII grid from render_ascii_map
 _WALKABLE_CHARS = frozenset({'.', 'W', '@', 'G'})
 _NPC_CHARS = frozenset({'N', 'T', 'I'})
+# Ledge chars -> approach direction required to pass through
+_LEDGE_CHARS: dict[str, str] = {'v': 'down', '<': 'left', '>': 'right'}
 _ROW_PATTERN = re.compile(r'^\s*(\d+):(.*)')
 
 
@@ -209,6 +233,9 @@ def collision_map_from_ascii(
                 cm.set_walkable(x, y)
                 if ch == 'W':
                     warp_points.append(Point(x, y))
+            elif ch in _LEDGE_CHARS:
+                # One-way ledge — passable only in the indicated direction
+                cm.set_ledge(x, y, _LEDGE_CHARS[ch])
             elif ch in _NPC_CHARS:
                 # Underlying tile is walkable but sprite blocks it
                 cm.set_walkable(x, y)
@@ -383,7 +410,7 @@ def find_path_astar(
         for dx, dy, direction in directions:
             nx, ny = x + dx, y + dy
 
-            if not collision_map.is_walkable(nx, ny):
+            if not collision_map.is_walkable_from(nx, ny, direction):
                 continue
 
             # Check tile-pair collisions if data available

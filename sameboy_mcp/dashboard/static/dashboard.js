@@ -474,6 +474,10 @@
     "!": "mc-sign",
     "#": "mc-wall",
     ".": "mc-walk",
+    "v": "mc-ledge",
+    "<": "mc-ledge",
+    ">": "mc-ledge",
+    "H": "mc-item",
   };
 
   function renderAsciiMap(body, data) {
@@ -481,7 +485,7 @@
     const lines = ascii.split("\n");
     let html = "";
     for (const line of lines) {
-      if (line.match(/^\s+\d/)) {
+      if (line.match(/^\s+\d/) && !line.match(/^\s*\d+:/)) {
         html += `<div class="map-row"><span class="mc-header">${esc(line)}</span></div>`;
         continue;
       }

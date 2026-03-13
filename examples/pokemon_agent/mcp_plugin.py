@@ -189,6 +189,23 @@ GRASS_TILES: dict[int, int] = {
 
 
 # ============================================================
+# Ledge tile IDs (OVERWORLD tileset only)
+# From pokeyellow/data/tilesets/ledge_tiles.asm
+# These are the "tile in front of player" values that trigger a ledge hop.
+# Ledges are one-way: player can jump DOWN/LEFT/RIGHT over them but not back.
+# ============================================================
+
+LEDGE_TILES: dict[int, str] = {
+    # coll_tile -> direction character for ASCII map
+    0x37: "v",   # down ledge
+    0x36: "v",   # down ledge (from grass)
+    0x27: "<",   # left ledge
+    0x0D: ">",   # right ledge
+    0x1D: ">",   # right ledge (variant)
+}
+
+
+# ============================================================
 # Bookshelf tile IDs per tileset
 # From pokeyellow/data/tilesets/bookshelf_tile_ids.asm
 # Tiles that trigger text when you press A facing them.
@@ -510,6 +527,8 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
                         grid[sy][sx] = "C"
                     elif quad_tiles & bookshelf_set:
                         grid[sy][sx] = "B"
+                    elif tileset_id == 0 and coll_tile in LEDGE_TILES:
+                        grid[sy][sx] = LEDGE_TILES[coll_tile]
                     else:
                         grid[sy][sx] = "#"
                 else:
@@ -632,8 +651,8 @@ def _render_map(emu_thread: EmulatorThread, include_legend: bool = True) -> dict
     }
     if include_legend:
         result["legend"] = (
-            ". walkable  # blocked  C pc  B bookshelf  "
-            "! interactable  G grass  W warp  "
+            ". walkable  # blocked  v ledge(down)  < ledge(left)  > ledge(right)  "
+            "C pc  B bookshelf  ! interactable  G grass  W warp  "
             "@ player  N npc  T trainer  I item"
         )
     return result
@@ -904,7 +923,7 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
 
         Each cell represents one player-movement step (16x16 pixels = 2x2 graphical tiles).
 
-        Legend: . walkable  # blocked  C pc  B bookshelf  ! interactable  G grass  W warp  @ player  N npc  T trainer  I item
+        Legend: . walkable  # blocked  v ledge(down)  < ledge(left)  > ledge(right)  C pc  B bookshelf  ! interactable  G grass  W warp  @ player  N npc  T trainer  I item
 
         Returns:
             Map metadata, ASCII grid, warp list, and sprite list
@@ -1280,10 +1299,13 @@ def register_tools(server: FastMCP, emu_thread: EmulatorThread, dashboard=None) 
         if include_ascii_map:
             result["ascii_map"] = map_data["ascii"]
             result["legend"] = (
-                ". walkable  # blocked  C pc  B bookshelf  "
-                "! interactable  G grass  W warp  "
+                ". walkable  # blocked  v ledge(down)  < ledge(left)  > ledge(right)  "
+                "C pc  B bookshelf  ! interactable  G grass  W warp  "
                 "@ player  N npc  T trainer  I item  H hidden_item"
             )
+            # Push to dashboard
+            if _push_panel_fn is not None:
+                _push_panel_fn("ascii_map", map_data, "ascii_map")
 
         # --- Screen text ---
         if include_screen_text:

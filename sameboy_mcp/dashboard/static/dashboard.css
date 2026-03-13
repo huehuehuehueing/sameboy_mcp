@@ -1002,8 +1002,9 @@ body::before {
 .mc-pc      { color: var(--purple); }
 .mc-book    { color: var(--orange); }
 .mc-sign    { color: var(--amber); }
-.mc-wall    { color: var(--border-bright); }
-.mc-walk    { color: var(--border); }
+.mc-wall    { color: var(--text-dim); }
+.mc-walk    { color: rgba(80, 90, 100, 0.7); }
+.mc-ledge   { color: var(--orange); }
 .mc-header  { color: var(--text-dim); }
 
 /* ── Screen Text Panel ─────────────────────────── */
