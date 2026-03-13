@@ -1250,6 +1250,7 @@ def parse_args():
                        help="Summarize LLM history after N messages (default: 60)")
     agent.add_argument("-v", "--verbose", action="store_true")
     agent.add_argument("--log-state", action="store_true", help="Print game state each cycle")
+    agent.add_argument("--autopilot", action="store_true", help="Start in autopilot mode (autonomous play from boot)")
 
     # Saved state
     state = parser.add_argument_group("Saved State")
@@ -1332,6 +1333,9 @@ async def main():
 
     # Run agent
     agent = PokemonAgent(config, event_sink=event_sink)
+    if args.autopilot:
+        agent._autopilot = True
+        print("Autopilot: ON (autonomous mode)")
     try:
         print("Connecting to SameBoy MCP server...")
         await agent.connect()
