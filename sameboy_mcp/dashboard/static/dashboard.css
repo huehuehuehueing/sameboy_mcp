@@ -291,6 +291,89 @@ body::before {
   color: var(--border-bright);
 }
 
+/* ── Agent Action Bar (horizontal, below register bar) ── */
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0 8px 0 8px;
+  height: 32px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.action-bar .rbar-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: var(--amber);
+  white-space: nowrap;
+}
+
+.action-bar-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.action-bar-content .action-group-label {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.action-bar-content .action-group-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.btn-action-bar {
+  background: var(--bg-panel-header);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.btn-action-bar:hover {
+  background: var(--border);
+  border-color: var(--amber);
+  color: var(--text-bright);
+}
+
+.btn-action-bar:active, .btn-action-bar.pressed {
+  background: rgba(227, 179, 65, 0.2);
+  border-color: var(--amber);
+}
+
+.btn-action-bar.control {
+  color: var(--green);
+  border-color: rgba(63, 185, 80, 0.3);
+}
+
+.btn-action-bar.control:hover {
+  border-color: var(--green);
+}
+
 /* ── Main Grid Layout ───────────────────────────── */
 
 .dashboard {
@@ -299,7 +382,7 @@ body::before {
   grid-template-rows: 1fr 1fr 200px 180px;
   gap: var(--gap);
   padding: var(--gap);
-  height: calc(100vh - 36px - 28px);
+  height: calc(100vh - 36px - 28px - 40px);
   position: relative;
   z-index: 1;
 }

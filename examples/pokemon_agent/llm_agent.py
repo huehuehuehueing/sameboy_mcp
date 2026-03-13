@@ -214,21 +214,22 @@ class LLMToolAgent:
                 timeout=30.0,  # 30s per API call; prevents indefinite hangs
             )
 
-            # Query actual model name from server (vLLM uses "default" as placeholder)
-            if self._model == "default":
-                try:
-                    import httpx
-                    models_url = base_url.rstrip("/") + "/models"
-                    resp = httpx.get(models_url, timeout=5.0)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if data.get("data") and len(data["data"]) > 0:
-                            self._model = data["data"][0].get("id", "default")
-                            if self._verbose:
-                                print(f"  [llm-agent] discovered model: {self._model}")
-                except Exception as e:
-                    if self._verbose:
-                        print(f"  [llm-agent] model discovery failed: {e}")
+            # Query available models from server and print them
+            try:
+                import httpx
+                models_url = base_url.rstrip("/") + "/models"
+                resp = httpx.get(models_url, timeout=5.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    available = [m.get("id", "?") for m in data.get("data", [])]
+                    if available:
+                        print(f"  [llm-agent] available models: {', '.join(available)}")
+                        # Auto-select first model if configured as "default"
+                        if self._model == "default":
+                            self._model = available[0]
+                            print(f"  [llm-agent] auto-selected model: {self._model}")
+            except Exception as e:
+                print(f"  [llm-agent] model discovery failed: {e}")
 
     def _log(self, msg: str):
         if self._verbose:

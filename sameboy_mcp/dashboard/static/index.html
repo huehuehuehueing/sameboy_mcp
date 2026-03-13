@@ -28,6 +28,27 @@
   <div class="register-bar-content" id="registers-body"></div>
 </div>
 
+<!-- Agent Action Bar (compact horizontal, below register bar) -->
+<div class="action-bar" id="action-bar">
+  <span class="indicator active"></span>
+  <span class="rbar-label">AGENT</span>
+  <div class="action-bar-content" id="action-bar-content">
+    <button class="btn-action-bar control" data-action-id="resume">Autopilot ON</button>
+    <button class="btn-action-bar control" data-action-id="stop">Autopilot OFF</button>
+    <span class="action-group-sep"></span>
+    <button class="btn-action-bar" data-action-id="find_exit">Find Exit</button>
+    <span class="action-group-sep"></span>
+    <button class="btn-action-bar" data-action-id="explore_up">&#x2191;</button>
+    <button class="btn-action-bar" data-action-id="explore_down">&#x2193;</button>
+    <button class="btn-action-bar" data-action-id="explore_left">&#x2190;</button>
+    <button class="btn-action-bar" data-action-id="explore_right">&#x2192;</button>
+    <span class="action-group-sep"></span>
+    <button class="btn-action-bar" data-action-id="interact">Interact</button>
+    <button class="btn-action-bar" data-action-id="press_a">A</button>
+    <button class="btn-action-bar" data-action-id="press_b">B</button>
+  </div>
+</div>
+
 <!-- Main Grid -->
 <div class="dashboard">
 
@@ -106,10 +127,7 @@
           <button class="btn-key" data-key="select">Sel</button>
         </div>
       </div>
-      <div class="agent-actions-section" id="agent-actions-section" style="display:none">
-        <div class="agent-actions-label">Agent Actions</div>
-        <div id="agent-actions-container"></div>
-      </div>
+      <!-- Agent actions moved to action-bar above main grid -->
     </div>
   </div>
 

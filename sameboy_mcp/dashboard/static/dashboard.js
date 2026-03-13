@@ -537,10 +537,29 @@
 
   // ── Agent action buttons ────────────────────────
 
+  function wireActionBarButtons() {
+    const container = document.getElementById("action-bar-content");
+    if (!container) return;
+    container.querySelectorAll("[data-action-id]").forEach((btn) => {
+      if (btn._wired) return; // avoid double-binding
+      btn._wired = true;
+      btn.addEventListener("mousedown", () => {
+        const id = btn.dataset.actionId;
+        send({ type: "agent_action", action_id: id });
+        addLlmMessage({ role: "agent", content: `[action] ${id}` });
+        btn.classList.add("pressed");
+        setTimeout(() => btn.classList.remove("pressed"), 200);
+      });
+    });
+  }
+
+  // Wire up default buttons from HTML on page load
+  wireActionBarButtons();
+
   function updateAgentActions(actions) {
-    const container = document.getElementById("agent-actions-container");
-    const section = document.getElementById("agent-actions-section");
-    if (!container || !section) return;
+    const bar = document.getElementById("action-bar");
+    const container = document.getElementById("action-bar-content");
+    if (!bar || !container) return;
 
     const groups = {};
     for (const action of actions) {
@@ -550,27 +569,18 @@
     }
 
     let html = "";
+    let first = true;
     for (const [groupName, groupActions] of Object.entries(groups)) {
-      html += `<div class="agent-action-group">`;
-      html += `<div class="agent-action-group-label">${esc(groupName)}</div>`;
-      html += `<div class="agent-action-buttons">`;
+      if (!first) html += `<span class="action-group-sep"></span>`;
+      first = false;
       for (const action of groupActions) {
-        html += `<button class="btn-agent-action" data-action-id="${esc(action.id)}">${esc(action.label)}</button>`;
+        const cls = groupName === "control" ? "btn-action-bar control" : "btn-action-bar";
+        html += `<button class="${cls}" data-action-id="${esc(action.id)}" title="${esc(groupName)}">${esc(action.label)}</button>`;
       }
-      html += `</div></div>`;
     }
     container.innerHTML = html;
-    section.style.display = "";
-
-    container.querySelectorAll("[data-action-id]").forEach((btn) => {
-      btn.addEventListener("mousedown", () => {
-        const id = btn.dataset.actionId;
-        send({ type: "agent_action", action_id: id });
-        addLlmMessage({ role: "agent", content: `[action] ${id}` });
-        btn.classList.add("pressed");
-        setTimeout(() => btn.classList.remove("pressed"), 200);
-      });
-    });
+    bar.style.display = "";
+    wireActionBarButtons();
   }
 
   // ── Prompt injection ────────────────────────────
