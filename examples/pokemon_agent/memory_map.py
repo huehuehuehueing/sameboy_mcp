@@ -42,6 +42,7 @@ WRAM_CUR_MAP_SCRIPT = 0xDA38     # Current map script index
 WRAM_SPRITE_PLAYER_Y = 0xC104    # Y pixel position on screen
 WRAM_SPRITE_PLAYER_X = 0xC106    # X pixel position on screen
 WRAM_SPRITE_FACING = 0xC109      # Facing direction (sprite level)
+WRAM_FONT_LOADED = 0xCFC3        # wFontLoaded — bit 0 set when textbox/font system active
 WRAM_WALK_COUNTER = 0xCFC4       # Walk animation counter
 WRAM_TILE_IN_FRONT = 0xCFC5      # Tile ID in front of player
 WRAM_WALK_BIKE_SURF = 0xD119     # Walking/biking/surfing state
@@ -423,7 +424,7 @@ WRAM_STATUS_FLAGS6 = 0xD731         # wStatusFlags6: bit 0 = BIT_GAME_TIMER_COUN
 WRAM_NAMING_SCREEN_TYPE = 0xCF91    # Name entry screen type (0=unused)
 WRAM_CURSOR_TILE_POS = 0xC4B0       # Cursor position in name entry
 WRAM_NUM_LETTERS_ENTERED = 0xCF4A   # Number of chars entered in name
-WRAM_TEXTBOX_FLAG = 0xCFC4          # Whether text box is active
+# Note: 0xCFC4 is WRAM_WALK_COUNTER. The textbox indicator is WRAM_FONT_LOADED at 0xCFC3.
 WRAM_JOY_IGNORE = 0xCD6B            # Bitmask of buttons to ignore
 WRAM_PREDEF_ID = 0xD0B6             # Current predef function running
 WRAM_WARP_DESTINATION = 0xD42F      # Destination map for warp
