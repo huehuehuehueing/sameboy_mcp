@@ -716,6 +716,7 @@ class GameStateReader:
         joypad_disabled: bool = False,
         scripted_movement: bool = False,
         font_loaded: bool = False,
+        game_timer_counting: bool = False,
     ) -> GameMode:
         """Detect current game mode from memory values."""
         # Lost battle
@@ -756,9 +757,11 @@ class GameStateReader:
                 return GameMode.MAIN_MENU
 
         # Title screen / Intro detection (pre-game only)
-        # Guarded by `not names_set` to prevent misdetecting Pallet Town
-        # (map_id=0) as title screen when the player is actually in-game
-        if party_count == 0 and badges == 0 and not names_set:
+        # Use `not names_set` OR `not game_timer_counting` to allow detection
+        # even when names are stale in RAM from a previous game.  The game timer
+        # only starts counting once SpecialEnterMap runs, so it's a reliable
+        # indicator that actual gameplay hasn't begun.
+        if party_count == 0 and badges == 0 and (not names_set or not game_timer_counting):
             if map_id == 0:
                 # Check PC range for title screen code
                 if pc < 0x4000:
@@ -770,9 +773,9 @@ class GameStateReader:
                         print("Debug: Detected Oak's intro speech (oak_speech flag), detecting INTRO mode")
                         return GameMode.INTRO
 
-        # Fallback: map_id=0 with no party and names not set = title screen
-        if map_id == 0 and party_count == 0 and not names_set:
-            print("Debug: Fallback detection for title screen (map_id=0, no party, names not set)")
+        # Fallback: map_id=0 with no party and game not started
+        if map_id == 0 and party_count == 0 and (not names_set or not game_timer_counting):
+            print("Debug: Fallback detection for title screen (map_id=0, no party)")
             return GameMode.TITLE_SCREEN
 
         # Check for scripted sequence using wSimulatedJoypadStatesIndex
@@ -796,7 +799,7 @@ class GameStateReader:
         # ignore_input counter only indicates INTRO/DIALOG on map 0 when the
         # game hasn't started yet.  Pallet Town is also map_id=0, so guard
         # with `not names_set` to avoid false DIALOG on the actual overworld.
-        if ignore_input > 10 and map_id == 0 and not names_set:
+        if ignore_input > 10 and map_id == 0 and (not names_set or not game_timer_counting):
             if party_count == 0 and badges == 0:
                 return GameMode.INTRO
             print(f"Debug _detect_mode: ignore_input={ignore_input} → DIALOG (map={map_id})")
@@ -970,6 +973,7 @@ class GameStateReader:
             joypad_disabled=joypad_disabled,
             scripted_movement=scripted_movement,
             font_loaded=font_loaded,
+            game_timer_counting=game_timer_counting,
         )
 
         # Read party Pokemon
