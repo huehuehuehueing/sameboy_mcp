@@ -79,6 +79,34 @@ await disable_live_display()
 - Enter: Start
 - Shift: Select
 
+## Dashboard
+
+The server includes a built-in web dashboard for real-time monitoring of emulator state, game data, and agent activity.
+
+![Dashboard showing live emulator screen, ASCII map, screen text decode, and game state](docs/screenshots/dashboard.png)
+
+```bash
+# Start the server with dashboard enabled
+python -m sameboy_mcp.server \
+  --lib path/to/libsameboy.so \
+  --rom path/to/game.gb \
+  --plugin examples.pokemon_agent.mcp_plugin \
+  --dashboard --dashboard-port 31337
+```
+
+Open `http://localhost:31337` in a browser. The dashboard provides:
+
+- **Live Screen** -- Emulator video feed streamed as JPEG frames at ~10fps via WebSocket
+- **Game State** -- Map name, player coordinates, party count, badges, money (updated at 5Hz from a plugin snapshot hook)
+- **ASCII Map** -- Collision grid with player position, warps, NPCs, and items, rendered from ROM blockset data. Updates on map changes and on every `render_ascii_map` tool call
+- **Screen Text** -- Decoded tile map text (Gen 1 character encoding → readable strings). Updates on every `decode_screen_text`, `press_and_read`, or `wait_and_read` tool call
+- **Controls** -- On-screen D-pad and buttons for manual input
+- **Agent Log** -- Real-time stream of agent actions and tool calls
+
+The dashboard is driven by an EventBus that receives data from three sources: the emulator's VBlank callback (frames), a 5Hz snapshot loop (game state + plugin hooks), and MCP tool calls (panel data pushed synchronously when tools execute). Plugins register custom panels via `dashboard.register_panels()` and push data via `PANEL_DATA` events. Late-joining WebSocket clients receive cached state for all panels on connect.
+
+The dashboard is optional -- the server and all MCP tools work identically without it.
+
 ## Documentation
 
 ### Reference
@@ -120,8 +148,13 @@ project_sameboy/
 │   │   ├── core.py            # Emulator class
 │   │   ├── thread.py          # Background execution
 │   │   └── display.py         # SDL2 live display
+│   ├── dashboard/             # Web dashboard (WebSocket + static HTML/JS)
+│   │   ├── __init__.py        # DashboardServer, snapshot loop, panel registry
+│   │   ├── events.py          # EventBus, Event types, AgentEventSink
+│   │   ├── frame_relay.py     # VBlank → JPEG frame rate limiter
+│   │   └── static/            # Frontend (dashboard.js, index.html, styles)
 │   ├── tools/                 # MCP tool modules
-│   └── server.py              # MCP entry point (supports --plugin)
+│   └── server.py              # MCP entry point (supports --plugin, --dashboard)
 ├── examples/
 │   └── pokemon_agent/         # Pokemon Yellow AI agent
 │       ├── mcp_plugin.py      # Game-specific MCP tools (text decoder, ASCII map)
