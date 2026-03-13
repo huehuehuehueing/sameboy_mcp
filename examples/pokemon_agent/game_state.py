@@ -286,6 +286,7 @@ class GameState:
     ignore_input: int = 0   # Frames remaining where game ignores joypad
     joypad_sim: int = 0     # Non-zero when game is simulating joypad (scripted sequences)
     joypad_disabled: bool = False  # BIT_DISABLE_JOYPAD (bit 5 of wStatusFlags5 @ 0xD72F) — definitive input block
+    font_loaded: bool = False  # wFontLoaded (0xCFC3) bit 0 — textbox/font system active
     names_set: bool = False  # True when both player and rival names arent debug defaults
     pc: int = 0             # CPU program counter (for debug logging)
     game_timer_counting: bool = False  # BIT_GAME_TIMER_COUNTING: set once by SpecialEnterMap after OakSpeech
@@ -689,6 +690,7 @@ class GameStateReader:
         pc: int = 0,
         joypad_disabled: bool = False,
         scripted_movement: bool = False,
+        font_loaded: bool = False,
     ) -> GameMode:
         """Detect current game mode from memory values."""
         # Lost battle
@@ -781,8 +783,8 @@ class GameStateReader:
         # presses are discarded by DiscardButtonPresses.  It is the
         # game's own "input blocked" flag and is the authoritative
         # indicator of dialog/text state.
-        if joypad_disabled:
-            print(f"Debug _detect_mode: joypad_disabled=True (flags5=0x{0x20:02X}) → DIALOG (map={map_id})")
+        if joypad_disabled or font_loaded:
+            print(f"Debug _detect_mode: joypad_disabled={joypad_disabled} font_loaded={font_loaded} → DIALOG (map={map_id})")
             return GameMode.DIALOG
 
         # Secondary: screen tile analysis as fallback for menus that
@@ -856,6 +858,8 @@ class GameStateReader:
         # button presses are discarded by DiscardButtonPresses.
         status_flags5 = await self._read_byte(mem.WRAM_STATUS_FLAGS5)
         joypad_disabled = bool(status_flags5 & 0x20)  # bit 5
+        font_loaded_byte = await self._read_byte(mem.WRAM_FONT_LOADED)
+        font_loaded = bool(font_loaded_byte & 0x01)
         scripted_movement = bool(status_flags5 & 0x80)  # bit 7 BIT_SCRIPTED_MOVEMENT_STATE
 
         # Read wStatusFlags6 — bit 0 (BIT_GAME_TIMER_COUNTING) is set once
@@ -917,6 +921,7 @@ class GameStateReader:
             names_set=names_set,
             joypad_disabled=joypad_disabled,
             scripted_movement=scripted_movement,
+            font_loaded=font_loaded,
         )
 
         # Read party Pokemon
@@ -1010,6 +1015,7 @@ class GameStateReader:
             ignore_input=ignore_input,
             joypad_sim=joypad_sim,
             joypad_disabled=joypad_disabled,
+            font_loaded=font_loaded,
             names_set=names_set,
             pc=pc,
             game_timer_counting=game_timer_counting,
