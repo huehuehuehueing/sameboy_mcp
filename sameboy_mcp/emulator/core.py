@@ -770,7 +770,7 @@ class SameBoyEmulator:
             return True  # Already running
 
         width, height = self.get_screen_size()
-        title = f"SameBoy MCP - {self._rom_title}" if self._rom_title else "SameBoy MCP"
+        title = f"GameBoy emulator - {self._rom_title}" if self._rom_title else "GameBoy emulator"
 
         self._live_display = LiveDisplay(
             width=width,

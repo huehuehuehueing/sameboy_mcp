@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "sameboy": {
+      "command": "/Users/waybarrios/miniconda3/envs/sameboy_mcp_test/bin/python",
+      "args": [
+        "-m",
+        "sameboy_mcp.server",
+        "--lib",
+        "/Users/waybarrios/Documents/code/sameboy_mcp/sameboy_src/SameBoy-1.0.2/build/lib/libsameboy.so",
+        "--rom",
+        "/Users/waybarrios/Downloads/Pokemon - Yellow Version (USA, Europe).gbc"
+      ],
+      "cwd": "/Users/waybarrios/Documents/code/sameboy_mcp"
+    }
+  }
+}

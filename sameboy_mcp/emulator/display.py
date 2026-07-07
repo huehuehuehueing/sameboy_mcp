@@ -25,7 +25,7 @@ class LiveDisplay:
     SCALE_3X = 3
     SCALE_4X = 4
 
-    def __init__(self, width: int = 160, height: int = 144, scale: int = 2, title: str = "SameBoy MCP"):
+    def __init__(self, width: int = 160, height: int = 144, scale: int = 2, title: str = "GameBoy emulator"):
         """
         Initialize the live display.
 

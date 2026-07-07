@@ -331,7 +331,7 @@ def register_control_tools(server: FastMCP, emu_thread: EmulatorThread) -> None:
 
             emu = emu_thread.emulator
             width, height = emu.get_screen_size()
-            title = f"SameBoy MCP - {emu.rom_title}" if emu.rom_title else "SameBoy MCP"
+            title = f"GameBoy emulator - {emu.rom_title}" if emu.rom_title else "GameBoy emulator"
 
             display = LiveDisplay(width=width, height=height, scale=scale, title=title)
 
